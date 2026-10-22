@@ -11,6 +11,16 @@ const waitFor = async (manager) => {
   return manager.status();
 };
 
+test('curated transfer reports checksum verification before becoming ready',async t=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'aiplay-verify-progress-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const body=Buffer.alloc(4*1024*1024,42),digest=createHash('sha256').update(body).digest('hex');
+ const manager=await createModelManager({modelsDir:root,bundles:{sample:{label:'Synthetic fixture',totalBytes:body.length,files:[{relative:'checkpoints/synthetic.bin',bytes:body.length,sha256:digest,url:'https://example.test/fixture'}]}},fetchFn:async()=>new Response(body)});
+ await manager.install('sample',true);const phases=new Set();
+ while(manager.status().active){phases.add(manager.status().bundles[0].state);await new Promise(resolve=>setImmediate(resolve));}
+ assert.ok(phases.has('downloading'));assert.ok(phases.has('verifying'));assert.equal(manager.status().bundles[0].state,'ready');
+ assert.equal(createHash('sha256').update(await readFile(path.join(root,'checkpoints/synthetic.bin'))).digest('hex'),digest);
+});
+
 test('every production bundle has pinned source URLs, sizes and checksums', () => {
   for (const bundle of Object.values(MODEL_BUNDLES)) {
     assert.equal(bundle.totalBytes, bundle.files.reduce((n, f) => n + f.bytes, 0));

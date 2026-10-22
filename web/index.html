@@ -5389,13 +5389,14 @@
           <summary><span class="cloudnum">3</span> RunPod GPU</summary>
           <p class="hint">One worker connection for music, pictures and video.</p>
           <p class="hint" id="runpodModeHint">Open RunPod GPU from the launcher to configure your worker and account.</p>
+          <div id="cloudLocalPlan" hidden></div>
           <div id="cloudSetup" hidden>
             <div class="cloud-flow-head"><div><h4>Cloud computer</h4><span class="hint">RunPod / Easy setup</span></div><span class="chip" id="cloudFlowAccount">Checking account</span></div>
             <nav class="cloud-setup-steps" role="tablist" aria-label="Cloud setup">
               <button class="edtool sm" id="cloudFlowGoalTab" role="tab" aria-controls="cloudFlowGoal" data-cloud-page="goal" type="button">1. Your goal</button>
-              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">2. Costs</button>
-              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">3. Install AI</button>
-              <button class="edtool sm" id="cloudFlowReadyTab" role="tab" aria-controls="cloudFlowReady" data-cloud-page="ready" type="button">4. Ready</button>
+              <button class="edtool sm" id="cloudFlowWhereTab" role="tab" aria-controls="cloudFlowWhere" data-cloud-page="where" type="button">2. Location</button>
+              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">3. Review</button>
+              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">4. Install</button>
             </nav>
             <span id="cloudSetupStatus" class="chip busy" role="status">Checking setup</span>
             <p class="hint" id="cloudSetupHint"></p>
@@ -5410,6 +5411,12 @@
               </fieldset>
               <div id="cloudModelPlan"></div>
               <p class="hint" id="cloudFlowGoalNote">One connection for music, pictures and video.</p>
+              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button">Choose location</button></div>
+            </section>
+            <section id="cloudFlowWhere" role="tabpanel" aria-labelledby="cloudFlowWhereTab" hidden>
+              <h3>Where will it run?</h3>
+              <div class="cta" role="group" aria-label="Plan location"><button class="edtool" id="cloudWhereLocal" type="button" aria-pressed="false">My Computer</button><button class="edtool" id="cloudWhereRunpod" type="button" aria-pressed="true">RunPod</button></div>
+              <p class="hint" id="cloudWhereHint">Changing a plan does not switch the running app; choose its mode in the launcher.</p>
               <details class="more" id="cloudFlowAccountDetails" open><summary>Connect account</summary>
             <div id="cloudSetupAccount" hidden>
               <div id="cloudSetupAccountFields"></div>
@@ -5421,10 +5428,12 @@
               </details>
             </div>
               </details>
-              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button" disabled>Continue to costs</button></div>
+              <div class="cta"><button class="btn sm" id="cloudFlowWhereNext" type="button">Review setup</button></div>
             </section>
             <section id="cloudFlowCosts" role="tabpanel" aria-labelledby="cloudFlowCostsTab" hidden>
-              <h3>Review your costs</h3>
+              <h3>Review your setup</h3>
+              <div id="cloudPlanReview" class="cloud-flow-box params"></div>
+              <div id="cloudRunpodReview">
               <div class="cloud-flow-box params">
                 <label>computing</label><span class="pv" id="cloudFlowCostRate">Choose a computer below</span>
                 <label>saved storage</label><span class="pv" id="cloudFlowCostStorage">Shown before approval</span>
@@ -5438,7 +5447,9 @@
               <div id="cloudSetupCreateFields" hidden></div>
             </div>
               <div class="cta"><button class="btn sm" id="cloudFlowCostStart" type="button" hidden>Review start price</button>
-                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to AI</button></div>
+                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to install</button></div>
+              </div>
+              <div id="cloudLocalReview" hidden><p class="hint">Use My Computer in the launcher, then install selected models in Models.</p><button class="edtool" type="button" id="cloudOpenLocal">Open local setup</button></div>
             </section>
             <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
               <h3 id="cloudInstallTitle">Setting up your AI</h3>
@@ -5508,21 +5519,32 @@
                   Give it permission to read and stop computers; its provider permissions may cover other computers in your account.</p>
               </details>
             </div>
-              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>Continue to Ready</button></div>
+              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>View computer</button></div>
             </section>
-            <section id="cloudFlowReady" role="tabpanel" aria-labelledby="cloudFlowReadyTab" hidden>
+            <section id="cloudFlowReady" aria-label="Your cloud computer" hidden>
               <h3 id="cloudFlowReadyTitle">Your cloud computer</h3>
               <p class="hint" id="cloudFlowReadyGoal"></p>
               <div class="cloud-flow-states"><span class="chip" id="cloudFlowProvider" role="status">Checking computer</span><span class="chip" id="cloudFlowAI" role="status">Checking AI</span></div>
               <div class="cloud-flow-box params">
+                <label>graphics card</label><span class="pv" id="cloudReadyGpu">Not selected</span>
+                <label>installed models</label><span class="pv" id="cloudReadyModels">Not checked</span>
+                <label>price checked</label><span class="pv" id="cloudReadyQuote">Not checked</span>
                 <label>computing</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
                 <label>automatic stop</label><span class="pv" id="cloudFlowReadyStop">Needs setup</span>
                 <label>your saved files</label><span class="pv" id="cloudFlowReadyFiles">Not checked</span>
                 <label>storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
+                <label>session compute</label><span class="pv" id="cloudReadySession">Unavailable</span>
+                <label>session allowance</label><span class="pv" id="cloudReadyAllowance">Not set for this session</span>
+                <label>provider billing</label><span class="pv" id="cloudReadyBilling">Not loaded</span>
               </div>
+              <p class="hint" id="cloudReadyRecovery" role="status"></p>
+              <details class="more"><summary>Storage and spending</summary><p class="hint" id="cloudReadyStorageRates"></p><p class="hint" id="cloudReadyDeadline"></p><p class="hint">Session estimates exclude storage; spending alerts and shutdown policies are not provider billing caps.</p></details>
               <div class="cta"><button class="btn sm" id="cloudFlowSample" type="button" disabled>Try a sample</button>
                 <button class="btn sm" id="cloudFlowReadyStart" type="button" hidden>Start computer</button>
                 <button class="edtool sm" id="cloudFlowReadyStopButton" type="button" hidden>Stop computer</button>
+                <button class="edtool sm" id="cloudReadyFinish" type="button" hidden>Finish job and stop</button>
+                <button class="edtool sm danger" id="cloudReadyNow" type="button" hidden>Stop now</button>
+                <button class="edtool sm" id="cloudReadyCheck" type="button">Check status</button>
                 <button class="edtool sm" id="cloudFlowRepair" type="button">Set up AI</button></div>
               <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
               <p class="hint">Stopping computing keeps saved storage and its charges.</p>

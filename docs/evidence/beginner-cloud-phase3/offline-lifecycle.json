@@ -1,0 +1,34 @@
+{
+  "synthetic": true,
+  "realProviderOperations": false,
+  "currentState": "EXITED",
+  "phase": "stopped",
+  "operation": null,
+  "providerUncertain": false,
+  "storage": {
+    "kind": "Computer storage",
+    "allocatedGB": 100,
+    "monthlyRunning": 10,
+    "monthlyStopped": 20,
+    "monthlyCurrent": 20,
+    "estimate": true,
+    "priceChecked": "2026-10-14"
+  },
+  "worker": null,
+  "simulatedActions": [
+    {
+      "action": "stop",
+      "at": 1792684064516
+    },
+    {
+      "action": "start",
+      "at": 1792684092761
+    },
+    {
+      "action": "stop",
+      "at": 1792684803312
+    }
+  ],
+  "generationSubmissions": 0,
+  "remoteOnlyStillEnabled": true
+}

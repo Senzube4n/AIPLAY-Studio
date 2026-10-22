@@ -134,7 +134,7 @@ export async function createCloudWatchdog({ stateDir, podId, activity, persist, 
     state.desktopLeaseUntil = input.workActive === true ? now() + 90000 : 0;
     if (input.workActive === true) touch(); await save(state); return snapshot();
   };
-  return { snapshot, configure, resume, prepare, requestStop, touch, tick, lease,
+  return { snapshot, status: async () => ({ ...snapshot(), workload: await activity().catch(() => ({ known:false, busy:true })) }), configure, resume, prepare, requestStop, touch, tick, lease,
     accepting: () => !frozen && (!state.pending || state.pending.mode === 'after-job' && state.desktopLeaseUntil > now()),
     transferring: () => !frozen, close: () => { if (timer) clearInterval(timer); } };
 }

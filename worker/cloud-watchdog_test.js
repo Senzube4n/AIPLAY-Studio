@@ -37,6 +37,13 @@ test('idle options/default, explicit credential enrollment and no secret returne
   for (const minutes of [0, 15, 30, 60]) await f.watchdog.configure({ podId: 'pod1', minutes });
   await assert.rejects(f.watchdog.configure({ podId: 'pod1', minutes: 1 }));
 });
+
+test('read-only cloud status reports meaningful work without renewing the idle policy or changing resources',async t=>{
+ const f=await fixture(t),before=f.watchdog.snapshot().lastActivity;
+ f.at+=60000;f.busy=true;const active=await f.watchdog.status();assert.equal(active.workload.busy,true);assert.equal(active.workload.known,true);
+ assert.equal(f.watchdog.snapshot().lastActivity,before);assert.equal(f.calls.length,0);assert.equal(f.cancelled,0);
+ f.known=false;assert.equal((await f.watchdog.status()).workload.known,false);
+});
 test('idle shutdown is remote and survives desktop disconnection and worker restart', async t => {
   const f = await fixture(t); await f.enable(30);
   f.watchdog.close(); f.watchdog = await f.create();

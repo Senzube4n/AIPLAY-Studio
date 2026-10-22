@@ -9,22 +9,32 @@ async function request(target, selection, verify = false) {
   const response = await fetch(`/api/setup-plan?target=${target}`, selection || verify ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, selection, ...(verify ? { verify: true } : {}) }) } : {});
   const data = await response.json(); if (!response.ok) throw Error(data.error || 'Setup could not be checked.'); return data;
 }
-export async function mountSetupPlanner(root, { target = 'local', chooseTarget = false, onPlan } = {}) {
+export async function mountSetupPlanner(root, { target = 'local', chooseTarget = false, selectionOnly = false, onPlan } = {}) {
   if (!root) return;
   if (root.dataset.mounted) { root.dispatchEvent(new Event('aiplay:plan-refresh')); return; }
   root.dataset.mounted = 'true';
-  const status = el('p', 'Checking model plan…', 'hint'), rows = el('div'), summary = el('div', null, 'params');
+  const status = el('p', 'Checking model plan…', 'hint'), rows = el('div'), summary = el('div', null, 'params'), actions = el('div');
   const where = el('select', null, 'sel2'); where.setAttribute('aria-label', 'Plan execution location');
-  where.add(new Option('Local (this PC)', 'local')); where.add(new Option('RunPod (cloud computer)', 'runpod')); where.value = target;
-  if (chooseTarget) { const row = el('div', null, 'params'); row.append(el('label', 'plan for'), where); root.append(row); }
-  root.append(rows, summary, status);
+  where.add(new Option('My Computer', 'local')); where.add(new Option('RunPod', 'runpod')); where.value = target;
+  if (chooseTarget) {
+    root.classList.add('setup-journey');
+    const nav = el('nav', null, 'setup-steps'); nav.setAttribute('aria-label', 'Model setup');
+    const panels = [rows, el('div'), summary, actions];
+    const show = index => { panels.forEach((p,i) => p.hidden = i !== index); [...nav.children].forEach((b,i) => { b.setAttribute('aria-pressed', String(i === index)); }); };
+    ['1. Models', '2. Location', '3. Review', '4. Install'].forEach((text,index) => {
+      const button=el('button',text,'edtool');button.type='button';button.addEventListener('click',()=>show(index));nav.append(button);
+    });
+    panels[1].append(el('label','run on'),where,el('p','Changing this plan does not switch the running app; choose its mode in the launcher.','hint'));
+    root.append(nav,...panels,status);show(0);
+    nav.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;const list=[...nav.children],at=list.indexOf(event.target);if(at<0)return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?3:(at+(event.key==='ArrowRight'?1:-1)+4)%4;list[next].click();list[next].focus();});
+  } else root.append(rows,summary,actions,status);
   let data, busy = false, revision = 0;
   function publish() {
     plans.set(target, data); onPlan?.(data);
     document.dispatchEvent(new CustomEvent('aiplay:model-plan', { detail: data }));
   }
   function paint() {
-    rows.replaceChildren(); summary.replaceChildren();
+    rows.replaceChildren(); summary.replaceChildren(); actions.replaceChildren();
     for (const [category, label] of Object.entries(labels)) {
       const row = el('div', null, 'params'), toggle = el('label'), check = el('input'); check.type = 'checkbox'; check.checked = !!data.selection[category];
       check.setAttribute('aria-label', `Include ${label}`); toggle.append(check, ` ${label}`);
@@ -66,6 +76,7 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
       };
       check.addEventListener('change', change); select.addEventListener('change', change);
     }
+    if (selectionOnly) { summary.hidden = true; status.textContent = ''; return; }
     const hw = data.hardware, unknownMemory = data.profiles.some(p => p.hardwareAcceptance) ? 'Minimum not established' : 'Unverified for selected models';
     summary.append(el('label', 'model storage'), el('span', gb(data.storage.modelBytes), 'pv'),
       el('label', 'space to plan'), el('span', `${data.storage.minimumGB} GB including working space`, 'pv'),
@@ -76,7 +87,7 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
     status.textContent = !modeMatches ? `Open ${data.modeRequired} in the launcher to use this plan.`
       : target === 'runpod' ? 'Review the computer price next; model installation needs licence approval.' : 'Use Models to install; current generation preferences are kept.';
     if (target === 'local') {
-      const button = el('button', 'Open Models', 'edtool'); button.type = 'button'; button.addEventListener('click', () => document.querySelector('.rail [data-view="models"]')?.click()); rows.append(button);
+      const button = el('button', 'Open Models', 'edtool'); button.type = 'button'; button.addEventListener('click', () => document.querySelector('.rail [data-view="models"]')?.click()); actions.append(button);
       for (const p of data.profiles.filter(p => !p.localFilesPresent)) {
         // Existing gated/native paths stay in Models, where their own setup is authoritative.
         const button = el('button', p.id === 'ltx25' ? 'LTX access setup in Models' : `Install ${p.label}`, 'edtool sm'); button.type = 'button'; button.disabled = !modeMatches || p.id === 'ltx25';
@@ -87,19 +98,19 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
             const r = await fetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', id: p.capability, exact: true }) });
             const result = await r.json(); if (!r.ok) throw Error(result.error); status.textContent = 'Download started; follow progress in Models.';
           } catch (e) { status.textContent = e.message; button.disabled = false; }
-        }); rows.append(button);
+        }); actions.append(button);
       }
-      for (const r of data.readiness || []) rows.append(el('p', `${r.label}: ${r.inferenceValidated ? 'Local inference verified' : r.filesVerified ? 'Checksums verified; inference unverified' : r.workflowValidated ? 'Workflow checked; inference unverified' : r.filesDownloaded ? 'Files present; runtime needs checking' : 'Files needed'}`, 'hint'));
-      const proof = el('details', null, 'more'); proof.append(el('summary', 'Verify a local sample'), el('p', 'Enable model hashes in Engine, create a sample, then press Check setup.', 'hint')); rows.append(proof);
+      for (const r of data.readiness || []) actions.append(el('p', `${r.label}: ${r.inferenceValidated ? 'Local inference verified' : r.filesVerified ? 'Checksums verified; inference unverified' : r.workflowValidated ? 'Workflow checked; inference unverified' : r.filesDownloaded ? 'Files present; runtime needs checking' : 'Files needed'}`, 'hint'));
+      const proof = el('details', null, 'more'); proof.append(el('summary', 'Verify a local sample'), el('p', 'Enable model hashes in Engine, create a sample, then press Check setup.', 'hint')); actions.append(proof);
       for (const profile of data.profiles) {
         const use = el('button', `Use in ${labels[profile.category]}`, 'edtool sm'); use.type = 'button';
         use.disabled = !modeMatches || !profile.localFilesPresent;
         use.addEventListener('click', () => document.dispatchEvent(new CustomEvent('aiplay:setup-model', { detail: { target, profile } })));
-        rows.append(use);
+        actions.append(use);
       }
     } else if (chooseTarget) {
       const button = el('button', 'Open Cloud Setup', 'edtool'); button.type = 'button'; button.disabled = !modeMatches;
-      button.addEventListener('click', () => { document.querySelector('.rail [data-view="settings"]')?.click(); revealSetting(document.getElementById('set-runpod')); }); rows.append(button);
+      button.addEventListener('click', () => { document.querySelector('.rail [data-view="settings"]')?.click(); revealSetting(document.getElementById('set-runpod')); }); actions.append(button);
     }
   }
   async function save(selection) {
@@ -115,7 +126,18 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
     try { const result = await request(requested, undefined, verify === true && target === 'local'); if (current !== revision || requested !== target) return; data = result; paint(); publish(); }
     catch (e) { status.textContent = e.message; }
   }
-  where.addEventListener('change', async () => { target = where.value; rows.replaceChildren(); summary.replaceChildren(); status.textContent = 'Checking model plan…'; await load(); });
+  async function changeTarget(next, carry = true) {
+    if (busy || !['local','runpod'].includes(next) || target === next) return;
+    const previous = carry ? data?.selection : null; target = next; where.value = target;
+    rows.replaceChildren(); summary.replaceChildren(); actions.replaceChildren(); status.textContent = 'Checking model plan…';
+    await load();
+    if (previous && data?.target === next) {
+      const selection = Object.fromEntries(Object.entries(previous).filter(([,id]) => data.choices.some(p => p.id === id)));
+      if (Object.keys(selection).length && JSON.stringify(selection) !== JSON.stringify(data.selection)) await save(selection);
+    }
+  }
+  where.addEventListener('change', () => changeTarget(where.value));
+  root.addEventListener('aiplay:plan-target', event => typeof event.detail === 'string' ? changeTarget(event.detail) : changeTarget(event.detail.target,event.detail.carry !== false));
   root.addEventListener('aiplay:plan-refresh', load);
   document.addEventListener('aiplay:model-plan', event => {
     if (event.detail?.target !== target || event.detail === data || busy) return;
