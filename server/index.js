@@ -1,4 +1,5 @@
 import { prepareAceMusicInput, selectAceMusicModels, checkAceMusic } from './music/ace-comfy-input.js';
+import { createModelLibraryRoutes } from './model-library.js';
 import { MODEL_PROFILES } from '../shared/model-profiles.js';
 import { remoteAceShelf, remoteYueCheckpoints, preserveSelectedAce } from './engine/remote-models.js';
 import { setupPlan, selectionFor, localModelReadiness, profileGraph } from './setup-plan.js';
@@ -3195,6 +3196,11 @@ const setupRunner = oneRunner(createSetupRunner({
   activate: (metadata) => qwenActivation.activate(metadata),
 }));
 const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
+const modelLibraryRoutes = createModelLibraryRoutes({config,json,readBody,sameOriginLocalJson,getSecret,
+  localFiles:async()=>scanBases(await modelBases()),
+  localMachine:()=>readMachine(gpuStatus(),ramStatus(),{cpuOnly:cpuOnlyEngine(),vaeMeasured:h3VaeMeasured()}),
+  localObjects:()=>config.remoteOnly ? Promise.resolve(null) : engineDoor.objectInfo(),
+  busy:()=>!!(jobs.current || jobs.queue.length || art.status().art?.current || [...models.progress.values()].some(p=>p.state==='downloading')) });
 /* Fast covers (server/fastcover.js): song covers on the processor. The art
  * queue asks use() for every song cover it queues. */
 const fastCovers = createFastCovers({ config, catalog: CATALOG, models, setup: setupRunner, save: () => savePrefs() });
@@ -3638,6 +3644,7 @@ const server = http.createServer(async (req, res) => {
   }
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
+  if (await modelLibraryRoutes(req,res,url)) return;
 
   try {
     if (p === "/api/custom-models" || p.startsWith("/api/custom-models/")) {

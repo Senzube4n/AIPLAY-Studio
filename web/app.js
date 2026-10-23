@@ -1,4 +1,5 @@
 import { mountAceMusic } from './ace-music.js';
+import { musicTemplateSettings, templateFormFields, assertTemplateFields } from './template-forms.js';
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { revealSetting } from './settings-sections.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
@@ -8877,7 +8878,7 @@ initLocal(() => loadModels());
 // Explicit use of a saved setup plan fills existing forms and uses their
 // existing selection handlers. It neither starts inference nor changes modes.
 document.addEventListener('aiplay:setup-model', async event => {
-  const { target, profile } = event.detail || {};
+  const { target, profile, settings = {} } = event.detail || {};
   if (!profile || (target === 'runpod') !== !!state.remoteOnly || state.musicOnly || state.cloudOnly) return;
   const set = (id, value) => { const n = $(id); if (n && value !== undefined) { n.value = String(value); n.dispatchEvent(new Event('input', { bubbles: true })); } };
   try {
@@ -8908,6 +8909,17 @@ document.addEventListener('aiplay:setup-model', async event => {
       set('vidSecs', profile.settings.seconds); set('vidSize', `${profile.settings.width}x${profile.settings.height}`);
       setView('video');
     }
+    if (profile.category === 'music') {
+      const fields=templateFormFields('music',settings,target);assertTemplateFields(document,fields);
+      if(Object.keys(settings).length){state.takes=1;for(const button of document.querySelectorAll('[data-n]'))button.classList.toggle('on',Number(button.dataset.n)===1);}
+      if(settings.instrumental!==undefined) setMode(settings.instrumental?'instrumental':'song');
+      if(settings.caption!==undefined)setGuided(false);
+      if(settings.codes!==undefined)$('aCodes').checked=settings.codes;
+      for(const [id,value]of Object.entries(fields)){set(id,value);if($(id).tagName==='SELECT')$(id).dispatchEvent(new Event('change'));}
+      if(settings.seed!==undefined){state.seedLocked=true;paintSeed();}
+      if(settings.duration!==undefined)$('maxDur').oninput?.();
+      aceMusicUi?.invalidate();
+    } else if(target==='local') {const values=profile.category==='video'&&Object.keys(settings).length?{...profile.settings,...settings}:settings;const fields=templateFormFields(profile.category,values,target);assertTemplateFields(document,fields);for(const [id,value]of Object.entries(fields))set(id,value);}
   } catch (e) { await appAlert(e.message, { title: 'Selected model needs setup' }); }
 });
 /* Advanced → Precision is the same choice as the music model picker. */
@@ -23152,6 +23164,24 @@ if (linkedDawPassage) {
     await loadReviewedMusicRequest(prepared);
   }).catch(error => appAlert(error.message, 'DAW draft was kept'));
 }
+
+for (const [id,category] of [['musicSaveTemplate','music'],['picturesSaveTemplate','pictures'],['videoSaveTemplate','video']]) $(id)?.addEventListener('click',async()=>{
+  try {
+    const target=state.remoteOnly?'runpod':'local',r=await fetch('/api/setup-plan?target='+target),plan=await r.json();if(!r.ok)throw Error(plan.error);
+    let profile,settings;
+    if(category==='music'){const spec=currentSpec(false);settings=musicTemplateSettings(spec);profile=plan.choices.find(p=>p.category==='music'&&p.settings.dit===settings.dit);}
+    else if(category==='pictures'){
+      const checkpoint=$(state.remoteOnly?'imgRunPodCheckpoint':'imgCkpt')?.value?.split('/').pop();
+      profile=plan.choices.find(p=>p.category==='pictures'&&p.settings.checkpoint===checkpoint);
+      settings={prompt:$('imgPrompt').value,negative:$('imgNeg')?.value||'',width:Number($('imgW').value),height:Number($('imgH').value),steps:Number($('imgSteps').value),cfg:Number($(state.remoteOnly?'imgRunPodCfg':'imgCfg').value)};
+    } else {
+      if($(state.remoteOnly?'vidRunPodModel':'vidEngine')?.value!=='ltx')throw Error('Creative video templates currently support the curated LTX workflow.');
+      profile=plan.choices.find(p=>p.category==='video');settings={prompt:$('vidPrompt').value,seconds:Number($('vidSecs').value)};
+    }
+    if(!profile)throw Error('Choose a supported curated model before saving a template.');
+    document.dispatchEvent(new CustomEvent('aiplay:template-capture',{detail:{target,selection:{[category]:profile.id},settings:{[category]:settings}}}));
+  }catch(e){await appAlert(e.message,{title:'Save creative template'});}
+});
 
 var aceMusicUi = mountAceMusic({ getState: () => state, readSpec: () => currentSpec(false),
   openSetup: () => { setView(state.remoteOnly ? "settings" : "models"); if (state.remoteOnly) revealSetting($("set-runpod")); },

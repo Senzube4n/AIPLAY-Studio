@@ -24,6 +24,11 @@ node --check server/engine/model-catalog.js || exit 1
 node --check server/engine/runpod-update.js || exit 1
 node --check server/engine/model-compatibility.js || exit 1
 node --check web/model-browser.js || exit 1
+node --check web/creative-templates.js || exit 1
+node --check web/template-forms.js || exit 1
+node --check server/creative-templates.js || exit 1
+node --check server/model-library.js || exit 1
+node --test server/creative-templates_test.js server/model-library_test.js || exit 1
 node --check web/worker-update.js || exit 1
 node --check worker/model-disk.js || exit 1
 node --check web/full-player-score.js || exit 1

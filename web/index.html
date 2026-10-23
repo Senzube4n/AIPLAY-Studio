@@ -41,6 +41,7 @@
   <!-- RunPod GPU mode (web/runpod-integrated.js). -->
   <link rel="stylesheet" href="runpod-integrated.css">
   <link rel="stylesheet" href="cloud-computer.css">
+  <link rel="stylesheet" href="model-library.css">
   <!-- The ⓘ in every screen's header and the panel it opens. AFTER modelfit.css,
        because the verdict chips inside that panel ARE modelfit's `.fitbadge` —
        one badge, one palette, so the Models screen and this panel cannot show
@@ -950,6 +951,7 @@
              is not there at all on the engines that have no cheap pass. -->
         <div class="ctasplit solo" id="ctaSplit">
           <button class="btn" type="button" id="btnCreate">Create</button>
+          <button class="edtool sm" type="button" id="musicSaveTemplate">Save as template</button>
           <button class="btn ctamore" type="button" id="ctaMore" hidden
             aria-expanded="false" aria-haspopup="true"
             title="Other ways to render this">&#9652;</button>
@@ -1452,6 +1454,7 @@
     <div class="ctawrap">
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
+        <button class="edtool sm" type="button" id="videoSaveTemplate">Save as template</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
         <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Production → Video clips → Ask friend.">Ask friend</button>
       </div>
@@ -1736,6 +1739,7 @@
       <div class="ctawrap">
       <div class="cta">
         <button class="btn primary wide" type="button" id="imgGo">Make image</button>
+        <button class="edtool sm" type="button" id="picturesSaveTemplate">Save as template</button>
         <button class="btn2" type="button" id="imgAskFriend" title="Prepare one Qwen image job per verified friend; rendering starts on their machine only after they accept it.">Ask friend</button>
       </div>
       <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
@@ -4837,6 +4841,18 @@
       <p class="hint">Only the music engine is required. Everything else is optional
         and downloads when you ask for it (never on its own).</p>
       <details class="more"><summary>Choose models and computer</summary><div id="localModelPlan"></div></details>
+      <div id="modelLibraryBrowser"></div>
+      <section class="pcard" id="creativeTemplates">
+        <h3>Creative templates</h3><p class="pcard-sub">Save a setup, preview a shared template, then review its models before use.</p>
+        <div class="cta"><button class="edtool" id="templateNew" type="button">Save as template</button><button class="edtool" id="templateImport" type="button">Import template</button><button class="edtool" id="templateBackup" type="button">Export all templates</button><input id="templateFile" type="file" accept=".json,.aiplay-template.json" hidden></div>
+        <p class="hint" role="status" id="templateStatus"></p><div id="templateList"></div>
+        <div id="templateEditor" hidden>
+          <div class="params"><label for="templateName">name</label><span class="pv"><input class="line" id="templateName" maxlength="80"></span><label for="templateDescription">description</label><span class="pv"><input class="line" id="templateDescription" maxlength="1000"></span><label for="templateCreator">creator (optional)</label><span class="pv"><input class="line" id="templateCreator" maxlength="100"></span><label for="templateLocation">preferred location</label><span class="pv"><select class="sel2" id="templateLocation"><option value="local">My Computer</option><option value="runpod">RunPod</option></select></span></div>
+          <details class="more"><summary>Generation settings</summary><textarea class="line" id="templateSettings" rows="8" aria-label="Template generation settings"></textarea></details>
+          <div class="cta"><button class="edtool" id="templatePreview" type="button">Preview template</button><button class="edtool" id="templateSave" type="button">Save template</button><button class="edtool" id="templateLoad" type="button" disabled>Load into form</button><button class="edtool" id="templateExport" type="button">Export template</button><button class="edtool" id="templateClose" type="button">Close</button></div>
+          <div id="templateReview" aria-live="polite"></div>
+        </div>
+      </section>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>
@@ -5471,8 +5487,11 @@
               </details>
               <details class="more" id="cloudModelBrowser">
                 <summary>Browse more models</summary>
-                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
-                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">On RunPod</button></nav>
+                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Browse models and LoRAs for your selected computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
+                <div class="params"><label for="catalogLocation">computer</label><span class="pv"><select class="sel2" id="catalogLocation"><option value="local">My Computer</option><option value="runpod">RunPod</option></select></span></div>
+                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" id="catalogCuratedTab" type="button">AIPLAY curated</button><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">Installed models</button><button class="edtool" id="catalogCustomTab" type="button">Custom reference</button></nav>
+                <section id="catalogCurated" hidden></section>
+                <section id="catalogCustom" hidden><p class="hint">Look up a Hugging Face repository or Civitai model ID; a download alone does not establish workflow support.</p><div class="cta"><input class="line" id="catalogCustomId" aria-label="Provider model reference" placeholder="creator/model or Civitai ID"><button class="edtool" id="catalogCustomOpen" type="button">Review reference</button></div></section>
                 <form id="catalogSearchForm"><div class="catalog-search"><input class="line" id="catalogQuery" aria-label="Search models" placeholder="Search models or styles"><button class="btn sm" type="submit">Search</button></div>
                   <div class="catalog-filters"><label>create<select class="sel2" id="catalogTask"><option value="pictures">Pictures</option><option value="video">Video</option><option value="music">Music</option><option value="all">Anything</option></select></label><label>type<select class="sel2" id="catalogType"><option value="all">Models + LoRAs</option><option value="checkpoint">Checkpoints</option><option value="lora">LoRAs</option></select></label><label>sort<select class="sel2" id="catalogSort"><option value="popular">Most downloaded</option><option value="newest">Newest</option></select></label><label>base model<input class="line" id="catalogBase" placeholder="Any (Civitai)"></label></div>
                 </form>
@@ -5482,10 +5501,10 @@
                 <section id="catalogDetail" class="catalog-detail" hidden><button class="edtool sm" id="catalogDetailClose" type="button">Close details</button><h3 id="catalogName"></h3><p class="hint" id="catalogPurpose"></p>
                   <div class="params"><label for="catalogVersion">version</label><span class="pv"><select class="sel2" id="catalogVersion"></select></span><label for="catalogFile">file</label><span class="pv"><select class="sel2" id="catalogFile"></select></span><label for="catalogFolder">save as</label><span class="pv"><select class="sel2" id="catalogFolder"><option value="checkpoints">Checkpoint</option><option value="loras">LoRA</option><option value="diffusion_models">Diffusion model</option><option value="vae">VAE</option><option value="text_encoders">Text encoder</option><option value="upscale_models">Upscaler</option></select></span><label>download size</label><span class="pv" id="catalogSize"></span><label>base model</label><span class="pv" id="catalogCompatibility"></span><label>licence</label><span class="pv" id="catalogLicense"></span></div>
                   <span class="chip" id="catalogFit" role="status">Compatibility unverified</span><p class="hint" id="catalogFitNote">Review the creator’s workflow and required components.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
-                  <p class="hint" id="catalogDestination"></p><p class="hint">Your saved provider key is sent to your worker for this transfer only.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to RunPod</button><p class="hint" id="catalogInstallState" role="status"></p>
+                  <p class="hint" id="catalogDestination"></p><p class="hint" id="catalogKeyTransfer">Your saved provider key is used only for provider access and the selected transfer.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to selected computer</button><button class="edtool sm" id="catalogSaveTemplate" type="button">Save model reference</button><p class="hint" id="catalogInstallState" role="status"></p>
                 </section>
-                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Models on RunPod</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Deleting a model may affect workflows that use it.</p><div id="catalogDiskList"></div></section>
-                <section id="catalogTransfers" hidden><h4>Downloads on RunPod</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
+                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Installed model files</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Custom files need a supported adapter and workflow before generation.</p><div id="catalogDiskList"></div></section>
+                <section id="catalogTransfers" hidden><h4>Model downloads</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
               </details>
             <div id="cloudSetupAI" hidden>
               <details class="more"><summary>Installation details</summary>
@@ -6206,6 +6225,7 @@
 <script type="module" src="runpod-integrated.js"></script>
 <script type="module" src="cloud-computer.js"></script>
 <script type="module" src="model-browser.js"></script>
+<script type="module" src="creative-templates.js"></script>
 <script type="module" src="worker-update.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->

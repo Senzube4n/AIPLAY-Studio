@@ -57,6 +57,10 @@ config.cloudSetup.plan={music:profile.id,pictures:'sdxl-turbo'};
 config.stems.when='off';config.lyrics.when='off';config.video.when='off';config.art.enabled=false;
 const realFetch=globalThis.fetch;
 globalThis.fetch=async(input,opts={})=>{const u=new URL(String(input));if(['127.0.0.1','localhost','[::1]'].includes(u.hostname))return realFetch(input,opts);
+ if((!opts.method||opts.method==='GET')&&u.origin==='https://civitai.com'&&['/api/v1/models','/api/v1/models/42'].includes(u.pathname)){
+ const model={id:42,name:'Synthetic LoRA reference',type:'LORA',creator:{username:'Offline fixture'},stats:{downloadCount:1},modelVersions:[{id:7,name:'Synthetic v1',baseModel:'Unknown adapter',images:[],files:[{id:17,name:'synthetic.safetensors',sizeKB:1,hashes:{SHA256:'b'.repeat(64)},downloadUrl:'https://civitai.com/api/download/models/7'}]}]};return Response.json(u.pathname.endsWith('/42')?model:{items:[model],metadata:{}});}
+ if((!opts.method||opts.method==='GET')&&u.origin==='https://huggingface.co'&&u.pathname==='/api/models')return Response.json([]);
+ if((!opts.method||opts.method==='GET')&&u.origin==='https://huggingface.co'&&['/api/models/fixture/synthetic','/api/models/fixture/synthetic/revision/'+'a'.repeat(40)].includes(u.pathname))return Response.json({id:'fixture/synthetic',sha:'a'.repeat(40),cardData:{license:'mit'},siblings:[{rfilename:'synthetic.safetensors',lfs:{sha256:'b'.repeat(64),size:1024}}]});
  if(u.hostname==='syntheticmusic-8787.proxy.runpod.net')return realFetch(workerURL+u.pathname+u.search,opts);
  if(u.hostname==='api.runpod.io'&&u.pathname==='/graphql'){
  const q=JSON.parse(opts.body||'{}').query||'';if(!/^query Aiplay(AccountCheck|RunpodOverview)/.test(q.trim()))throw Error('OFFLINE: provider mutation blocked');

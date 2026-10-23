@@ -1,0 +1,55 @@
+{
+  "format": "aiplay-template",
+  "version": 1,
+  "name": "Offline model reference",
+  "description": "",
+  "creator": "",
+  "preferredLocation": "runpod",
+  "selection": {
+    "music": "ace15-xl-sft",
+    "pictures": "sdxl-turbo"
+  },
+  "settings": {},
+  "artifacts": [
+    {
+      "relative": "diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors",
+      "bytes": 9974719930,
+      "sha256": "3c05ae268353b3540fb1fd7db4fd77ffbda9802ec641b624e15648e030ecf3ce"
+    },
+    {
+      "relative": "vae/ace_1.5_vae.safetensors",
+      "bytes": 337431732,
+      "sha256": "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb"
+    },
+    {
+      "relative": "text_encoders/qwen_0.6b_ace15.safetensors",
+      "bytes": 1191588248,
+      "sha256": "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7"
+    },
+    {
+      "relative": "text_encoders/qwen_4b_ace15.safetensors",
+      "bytes": 8379154232,
+      "sha256": "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873"
+    },
+    {
+      "relative": "checkpoints/sd_xl_turbo_1.0_fp16.safetensors",
+      "bytes": 6938081905,
+      "sha256": "e869ac7d6942cb327d68d5ed83a40447aadf20e0c3358d98b2cc9e270db0da26"
+    }
+  ],
+  "references": [
+    {
+      "provider": "civitai",
+      "id": "42",
+      "version": "7",
+      "file": "17",
+      "folder": "loras",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "bytes": 1024
+    }
+  ],
+  "workflows": {
+    "music": "a0e15341c36d6beefe4c4a2656e1cf4e9770b622f953404ad42ac2934de23c1e",
+    "pictures": "7434507a5df6e398ce0b7b3b72443a49631508299dfb40acb222772405d4c117"
+  }
+}

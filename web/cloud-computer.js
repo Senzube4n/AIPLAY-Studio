@@ -405,7 +405,8 @@ function mountSetup() {
     ['cloudSetupProtectionFields', ['cloudComputerKeyForm']],
   ]) for (const id of ids) $(target).append($(id));
   $('cloudSetup').append($('cloudFlowDetails'), $('cloudComputerConnection'));
-  $('cloudComputerConnection').append($('cloudModelBrowser'));
+  const browse = document.createElement('button'); browse.className='edtool'; browse.type='button'; browse.textContent='Open Model Library';
+  browse.addEventListener('click',()=>document.querySelector('.rail [data-view="models"]')?.click()); $('cloudComputerConnection').append(browse);
   const keySlot = document.createElement('details'); keySlot.id = 'cloudAcceptanceKey'; keySlot.className = 'more';
   keySlot.innerHTML = '<summary>Hardware test stop key</summary><p class="hint">Use a separate RunPod management key for the two-hour test deadline.</p><div id="cloudAcceptanceKeyFields"></div><p class="hint" role="status" id="cloudAcceptanceKeyNote"></p>';
   $('cloudComputerConnection').append(keySlot);

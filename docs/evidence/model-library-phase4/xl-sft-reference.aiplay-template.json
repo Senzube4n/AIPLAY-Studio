@@ -1,0 +1,56 @@
+{
+  "format": "aiplay-template",
+  "version": 1,
+  "name": "XL-SFT 30s instrumental",
+  "description": "",
+  "creator": "",
+  "preferredLocation": "runpod",
+  "selection": {
+    "music": "ace15-xl-sft"
+  },
+  "settings": {
+    "music": {
+      "caption": "Instrumental electronic music, 120 BPM, warm synthesizer chords, clear drum groove, evolving bass line, no vocals.",
+      "lyrics": "",
+      "instrumental": true,
+      "duration": 30,
+      "seed": 20261019,
+      "dit": "acestep_v1.5_xl_sft_bf16.safetensors",
+      "lm": "qwen_4b_ace15.safetensors",
+      "steps": 50,
+      "cfg": 7,
+      "codes": true,
+      "planTemperature": 0.85,
+      "bpm": 120,
+      "keyscale": "C major",
+      "timesignature": "4",
+      "language": "en"
+    }
+  },
+  "artifacts": [
+    {
+      "relative": "diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors",
+      "bytes": 9974719930,
+      "sha256": "3c05ae268353b3540fb1fd7db4fd77ffbda9802ec641b624e15648e030ecf3ce"
+    },
+    {
+      "relative": "vae/ace_1.5_vae.safetensors",
+      "bytes": 337431732,
+      "sha256": "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb"
+    },
+    {
+      "relative": "text_encoders/qwen_0.6b_ace15.safetensors",
+      "bytes": 1191588248,
+      "sha256": "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7"
+    },
+    {
+      "relative": "text_encoders/qwen_4b_ace15.safetensors",
+      "bytes": 8379154232,
+      "sha256": "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873"
+    }
+  ],
+  "references": [],
+  "workflows": {
+    "music": "a0e15341c36d6beefe4c4a2656e1cf4e9770b622f953404ad42ac2934de23c1e"
+  }
+}

@@ -16,6 +16,7 @@ import { getSetupPlan } from './setup-plan.js';
  * goes directly to the local backend secret store and is never returned here. */
 
 import { revealSetting } from './settings-sections.js';
+import { templateFormFields, assertTemplateFields } from './template-forms.js';
 
 const $ = (id) => document.getElementById(id);
 const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
@@ -574,6 +575,15 @@ function prepareSelectedSample(detail) {
 
 async function init() {
   if (!$("imgRenderWhere") || !$("vidRenderWhere")) return;
+  document.addEventListener('aiplay:setup-model',async event=>{
+    const {target,profile,settings}=event.detail||{};
+    if(target!=='runpod'||!settings||!profile||profile.category==='music')return;
+    try {const s=await(await fetch('/api/status')).json();if(!s.config?.remoteOnly)return;
+    const fields=templateFormFields(profile.category,{...profile.settings,...settings},target);assertTemplateFields(document,fields);
+    prepareCloudSample(profile.category,document,profile);
+    for(const [id,value]of Object.entries(fields)){const n=$(id);n.value=String(value);n.dispatchEvent(new Event(n.tagName==='SELECT'?'change':'input',{bubbles:true}));}
+    }catch(e){setState(e.message,true);}
+  });
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;
