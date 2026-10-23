@@ -60,7 +60,7 @@ test("old runtime and unsupported MOSS requests never enqueue anything", async (
 });
 
 test("all explicit acceleration recipes survive validation, queueing and the API receipt", async () => {
-  for (const [mossPreset, steps, cfg, sampler] of [["standard",25,2.5,"er_sde"],["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"],["kromoss-standard",25,2.5,"er_sde"],["kromoss-dmd2-8",8,1,"euler"],["moss-hires-v03",25,4,"er_sde"]]) {
+  for (const [mossPreset, steps, cfg, sampler] of [["standard",25,2.5,"er_sde"],["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"],["kromoss-standard",25,2.5,"er_sde"],["kromoss-dmd2-8",8,1,"euler"],["moss-hires-v03",25,4,"er_sde"],["nsfw-uncensored",30,3,"er_sde"]]) {
     const r = await request({ prompt: "A lighthouse", mossPreset });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.queued[0].video.mossPreset, mossPreset); assert.equal(r.checked[0].mossPreset, mossPreset);

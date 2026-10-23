@@ -160,7 +160,13 @@ changes an engine or repairs dependencies. The response includes `ready`,
 check before the recipe is ready.
 
 The preset values are `standard`, `spectrum-manual-h1`, `spectrum-adaptive-h2`,
-`turbo-4`, `dmd-8`, `kromoss-standard`, `kromoss-dmd2-8` and `moss-hires-v03`.
+`turbo-4`, `dmd-8`, `kromoss-standard`, `kromoss-dmd2-8`, `moss-hires-v03`
+and `nsfw-uncensored`. The last is an optional, pinned native model-only LoRA
+on MOSS SFT at strength 0.7, 30 steps, CFG 3 and ER-SDE/simple. Begin the
+prompt with `moss_xvstyle` yourself; Studio never silently inserts it.
+It shares the 1024²-pixel/1536-side adapter limit. See
+[MOSS_IMAGE.md](docs/MOSS_IMAGE.md#optional-nsfw-uncensored-adapter) for the
+exact artifact, Apache-2.0 source and publisher-recipe differences.
 Standard remains the default within MOSS. Readiness accepts optional `dit`,
 `encoder` and `vae` query values only when they match the selected verified
 bundle; it is not a way to load an arbitrary checkpoint.

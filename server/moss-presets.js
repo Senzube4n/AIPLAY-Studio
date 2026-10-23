@@ -102,6 +102,14 @@ export const MOSS_HIRES_ADAPTER = freeze({
   url: "https://huggingface.co/comfyanonymous/MOSS_image_MAX_ULTRA_hires_lora_test/resolve/9af7b1f3d135ce132cc6c4b8147030efff19507f/moss_hires_lora_test_v0.3.safetensors",
   strength: 1, catalogueId: "moss-image-hires-v03",
 });
+/** The native ComfyUI conversion, not the PEFT file or merged model. */
+export const MOSS_UNCENSORED_ADAPTER = freeze({
+  repo: "axiomofmind/Moss-image-nsfw-uncensored-lora", revision: "7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb",
+  filename: "MOSS-Image-NSFW-Uncensored-LoRA-ComfyUI.safetensors", bytes: 74379584,
+  sha256: "f766c5774a3fb68caa490bbc3f8153e8b5ccacafc36a1ee7f9ad6ec230ff11a3",
+  url: "https://huggingface.co/axiomofmind/Moss-image-nsfw-uncensored-lora/resolve/7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb/MOSS-Image-NSFW-Uncensored-LoRA-ComfyUI.safetensors",
+  strength: 0.7, clipStrength: 0, trigger: "moss_xvstyle", catalogueId: "moss-image-nsfw-uncensored",
+});
 export const MOSS_PRESETS = freeze({
   standard: { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
   "spectrum-manual-h1": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple", node: "SpectrumMOSSImageManual", policy: {
@@ -148,6 +156,8 @@ export const MOSS_PRESETS = freeze({
     node: "LoraLoaderModelOnly", adapter: MOSS_DMD2_ADAPTER },
   "moss-hires-v03": { steps: 25, cfg: 4, sampler: "er_sde", scheduler: "simple", node: "LoraLoaderModelOnly",
     adapter: MOSS_HIRES_ADAPTER, size: 2048, exactSize: 2048, maxPixels: 2048 * 2048, maxSide: 2048, maxCount: 1, vaeDecode: "native" },
+  "nsfw-uncensored": { steps: 30, cfg: 3, sampler: "er_sde", scheduler: "simple", node: "LoraLoaderModelOnly",
+    adapter: MOSS_UNCENSORED_ADAPTER },
 });
 export const MOSS_PRESET_NAMES = Object.freeze(Object.keys(MOSS_PRESETS));
 export function mossPreset(name = "standard") {

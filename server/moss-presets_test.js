@@ -224,7 +224,7 @@ test("accepted Standard graph is byte-equivalent and all explicit policies wire 
       if(name==="spectrum-manual-h1") assert.equal(g[6].inputs.max_consecutive_forecasts,1);
       else assert.equal(settings.spectrum.erSdeInternal.post_guard_horizon_cap,2);
     } else {
-      assert.equal(g[6].inputs.lora_name,r.adapter.filename); assert.equal(g[6].inputs.strength_model,1);
+      assert.equal(g[6].inputs.lora_name,r.adapter.filename); assert.equal(g[6].inputs.strength_model,r.adapter.strength);
       assert.equal(settings.adapter.sha256,r.adapter.sha256); assert.equal(settings.publisherBf16Equivalent,false);
       assert.match(settings.loraPrecision,/int8.*requantization/);
     }

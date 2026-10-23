@@ -102,6 +102,15 @@ export function loraTarget(allKeys, shapes = {}) {
   if (has("text_fusion.") || has("txtfusion.")) return { variant: "Krea 2", confidence: "certain" };
   if (has("adaln_single")) return { variant: "LTX", confidence: "certain" };
 
+  /* MOSS combines attention and fused feed-forward projections under the same
+   * layers.N.proj namespace. A generic layers/to_q name alone proves nothing.
+   * Native ComfyUI files use diffusion_model.; PEFT needs conversion. */
+  const mossLayers = new Set(base.map((key) => key.match(/^layers\.(\d+)\.proj\.ffn_up_gate$/)?.[1]).filter((n) => n !== undefined));
+  if (base.some((key) => { const match = key.match(/^layers\.(\d+)\.proj\.q$/); return match && mossLayers.has(match[1]); })) {
+    const native = allKeys.filter((key) => /layers\.\d+\.proj\./.test(key)).every((key) => key.startsWith("diffusion_model."));
+    return { variant: native ? "MOSS-Image" : "MOSS-Image (convert Diffusers namespace for ComfyUI)", confidence: "certain" };
+  }
+
   if (has("input_blocks") || has("output_blocks") || has("middle_block")) {
     /* SD1.5 and SDXL are BOTH classic UNets and share their module names, so
      * the name alone cannot separate them. The cross-attention context width

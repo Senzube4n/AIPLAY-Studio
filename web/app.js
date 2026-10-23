@@ -18048,6 +18048,7 @@ const IMG_MOSS_PRESETS = {
   "kromoss-standard": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
   "kromoss-dmd2-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" },
   "moss-hires-v03": { steps: 25, cfg: 4, sampler: "er_sde", scheduler: "simple", size: 2048 },
+  "nsfw-uncensored": { steps: 30, cfg: 3, sampler: "er_sde", scheduler: "simple" },
 };
 var imgMossPriorSize = null;
 let imgMossKey = "", imgMossRequest = 0, imgMossReady = false;

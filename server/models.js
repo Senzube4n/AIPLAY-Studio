@@ -65,7 +65,7 @@ import { config, isLightH3, offNvidia } from "./config.js";
 import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
-import { MOSS_PRESETS, MOSS_KROMOSS_MODEL, MOSS_DMD2_ADAPTER, MOSS_HIRES_ADAPTER } from "./moss-presets.js";
+import { MOSS_PRESETS, MOSS_KROMOSS_MODEL, MOSS_DMD2_ADAPTER, MOSS_HIRES_ADAPTER, MOSS_UNCENSORED_ADAPTER } from "./moss-presets.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
 import {
@@ -2120,6 +2120,21 @@ export const CATALOG = [
     files: [{ url: MOSS_HIRES_ADAPTER.url, dest: M("loras/" + MOSS_HIRES_ADAPTER.filename), bytes: MOSS_HIRES_ADAPTER.bytes, sha256: MOSS_HIRES_ADAPTER.sha256 }],
     note: "182 MB, strength 1, 25 steps, CFG 4, ER-SDE/simple, exactly 2048x2048 and one image per request. Uses native VAE decoding; no silent tiled fallback. Requires the three MOSS SFT base files. Quality and memory limits remain under evaluation.",
     requires: { experimental: true, note: "Exact adapter SHA is checked before queueing. No universal VRAM minimum has been measured." },
+  },
+  {
+    id: MOSS_UNCENSORED_ADAPTER.catalogueId, addonFor: "moss-image", group: "images", required: false,
+    label: "MOSS NSFW Uncensored (optional)",
+    why: "Optional model-only LoRA for MOSS-Image SFT. Choose NSFW Uncensored in Pictures.",
+    licence: "Apache-2.0", home: HF + "/" + MOSS_UNCENSORED_ADAPTER.repo,
+    outputRights: { class: "unrestricted", sellable: true, quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: HF + "/" + MOSS_UNCENSORED_ADAPTER.repo + "/blob/" + MOSS_UNCENSORED_ADAPTER.revision + "/LICENSE", note: PERMISSIVE_NOTE },
+    files: [{ url: MOSS_UNCENSORED_ADAPTER.url, dest: M("loras/" + MOSS_UNCENSORED_ADAPTER.filename), bytes: MOSS_UNCENSORED_ADAPTER.bytes, sha256: MOSS_UNCENSORED_ADAPTER.sha256 }],
+    note: "74.38 MB, native ComfyUI LoRA at model strength 0.7 with no CLIP patch. Begin the prompt with moss_xvstyle. "
+      + "Requires the MOSS SFT base files. This explicit preset uses 30 steps, CFG 3, ER-SDE/simple and no skip-layer guidance; "
+      + "it does not silently insert the trigger or match every setting of the publisher's Diffusers example. "
+      + "The separate PEFT, GGUF and merged-model files are not used. Native INT8 requantization is not claimed equivalent to publisher BF16 precision.",
+    requires: { experimental: true, note: "Exact adapter SHA and native MOSS LoRA support are checked before queueing. No measured content quality or minimum memory claim." },
   },
   {
     // Official ComfyUI repack, checked against Hugging Face's LFS metadata on

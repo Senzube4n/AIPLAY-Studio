@@ -328,6 +328,12 @@ in the app.
                             been read
                             https://huggingface.co/comfyanonymous/MOSS_image_MAX_ULTRA_hires_lora_test/tree/9af7b1f3d135ce132cc6c4b8147030efff19507f
 
+    MOSS NSFW Uncensored (optional)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/axiomofmind/Moss-image-nsfw-uncensored-lora/blob/7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb/LICENSE
+
     Qwen Image 2.1 (research licence)
                             Qwen Research License Agreement
                             Output rights: NOT FOR SALE — conservative Studio

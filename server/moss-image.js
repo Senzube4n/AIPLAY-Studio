@@ -55,7 +55,7 @@ export function mossImageOptions(options = {}) {
   const width = side(o.width ?? recipe.size, "width"), height = side(o.height ?? recipe.size, "height");
   if (name !== "standard" && (cfg !== recipe.cfg || steps !== recipe.steps)) throw new Error("The MOSS-Image " + name + " preset requires " + recipe.steps + " steps and CFG " + recipe.cfg + ".");
   if (recipe.exactSize && (width !== recipe.exactSize || height !== recipe.exactSize)) throw new Error("The MOSS-Image " + name + " preset requires exactly " + recipe.exactSize + "x" + recipe.exactSize + ".");
-  if (recipe.adapter && (width * height > (recipe.maxPixels || 1024 * 1024) || Math.max(width, height) > (recipe.maxSide || 1536))) throw new Error("Experimental 4/8-step MOSS presets support at most 1024 squared pixels and a 1536-pixel side. Choose Standard for larger pictures.");
+  if (recipe.adapter && (width * height > (recipe.maxPixels || 1024 * 1024) || Math.max(width, height) > (recipe.maxSide || 1536))) throw new Error("Experimental MOSS adapter presets support at most 1024 squared pixels and a 1536-pixel side. Choose Standard for larger pictures.");
   const negative = o.negative ?? "";
   if (typeof negative !== "string" || negative.length > 2000) throw new TypeError("negative must be a string of at most 2000 characters.");
   if (negative.trim() && cfg === 1) throw new Error("A MOSS-Image negative prompt needs CFG above 1.");

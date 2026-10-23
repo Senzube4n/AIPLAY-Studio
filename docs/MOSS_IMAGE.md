@@ -118,6 +118,42 @@ exact artifacts, recipes, MCP inputs and comparison limits. HiRes uses native
 VAE decoding and has no automatic tiled fallback. Its reviewed publisher release
 supplies no explicit adapter licence, so its terms remain unknown in Models.
 
+### Optional NSFW Uncensored adapter
+
+Install **MOSS NSFW Uncensored (optional)** in Models, then choose
+**NSFW Uncensored** in the MOSS preset menu. Standard and the automatic cover
+engine keep their existing defaults. The adapter is selected only by this
+explicit preset; custom adapter stacks remain unsupported.
+
+The native ComfyUI file is
+`MOSS-Image-NSFW-Uncensored-LoRA-ComfyUI.safetensors` (74,379,584 bytes), from
+[`axiomofmind/Moss-image-nsfw-uncensored-lora`](https://huggingface.co/axiomofmind/Moss-image-nsfw-uncensored-lora/tree/7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb),
+revision `7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb`, SHA-256
+`f766c5774a3fb68caa490bbc3f8153e8b5ccacafc36a1ee7f9ad6ec230ff11a3`.
+It uses the existing MOSS SFT checkpoint, encoder and VAE. The publisher
+supplies an [Apache-2.0 licence](https://huggingface.co/axiomofmind/Moss-image-nsfw-uncensored-lora/blob/7f8c6953c6a88af8cbc8daeb34633c237dd1a7bb/LICENSE).
+The PEFT file, separate GGUF adapter and large merged Diffusers model are not
+the native ComfyUI file and are not downloaded by this option.
+
+Begin the prompt with **`moss_xvstyle`** when following the publisher's recipe.
+Studio preserves the prompt you enter and does not insert the trigger.
+The model-only loader applies strength **0.7**, leaving CLIP unpatched
+(publisher clip strength 0). The preset fixes **30 steps, CFG 3,
+ER-SDE/simple**, starts at 1024 × 1024, and retains the existing adapter limit
+of 1024² pixels and a 1536-pixel side. Exact file size, SHA and native loader
+support must pass readiness before queueing.
+
+The adapter was trained on MOSS Base; the publisher prefers SFT for inference
+and also reports Base compatibility. This Studio preset targets SFT only.
+Its native INT8 requantization, sampler and disabled skip-layer guidance do
+not reproduce every part of the publisher's BF16 Diffusers example, which
+skips layer 22 in negative conditioning. Publisher example content and quality
+have not been validated by this integration. Metadata records the selected
+recipe, source pin, trigger, actual strength and verified adapter SHA.
+
+MCP callers use `moss_preset: "nsfw-uncensored"`; HTTP callers use
+`mossPreset: "nsfw-uncensored"`. Check readiness with the same preset.
+
 ### Local comparison, 22 October 2026
 
 A serial Studio-MCP comparison used an RTX 4070 Ti SUPER (16 GB), ComfyUI
