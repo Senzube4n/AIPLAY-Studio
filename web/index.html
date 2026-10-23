@@ -5440,6 +5440,8 @@
                 <label>session estimate</label><span class="pv" id="cloudFlowCostSession">Not started</span>
               </div>
               <p class="hint">GPU rental runs during setup; saved storage stays billed after stopping.</p>
+              <p class="hint" id="cloudIdleRecommendation">Automatic stop: 30 idle minutes recommended; enable it after connecting AI.</p>
+              <div id="cloudReviewProtection"></div>
             <div id="cloudSetupComputer" hidden>
               <div id="cloudSetupComputerFields"></div>
               <p class="hint" id="cloudSetupNoComputer" hidden>No cloud computer yet. Create one below to continue.</p>
@@ -5510,10 +5512,11 @@
             </div>
             <div id="cloudSetupProtection" hidden>
               <h4>Automatic stop</h4>
-              <p class="hint">A separate shutdown key keeps protection working after AIPLAY closes.</p>
+              <p class="hint">Choose an idle interval; a separate stop key keeps it working after AIPLAY closes.</p>
               <div id="cloudFlowIdleFields" class="params"></div>
               <div id="cloudSetupProtectionFields"></div>
               <div class="cta"><button class="edtool sm" id="cloudSetupSkipProtection" type="button">Keep running when closed</button></div>
+              <details class="more"><summary>What stays protected?</summary><p>Generation, queued jobs, installation, downloads and transfers keep the computer awake. Stopping keeps saved storage and its charges.</p><p>This idle policy is separate from an explicitly approved test deadline. Neither is a provider-enforced spending cap.</p></details>
               <details class="more"><summary>Why another key?</summary>
                 <p>A separate RunPod key is saved on this computer so it can stop safely after AIPLAY closes.
                   Give it permission to read and stop computers; its provider permissions may cover other computers in your account.</p>
@@ -5526,17 +5529,20 @@
               <p class="hint" id="cloudFlowReadyGoal"></p>
               <div class="cloud-flow-states"><span class="chip" id="cloudFlowProvider" role="status">Checking computer</span><span class="chip" id="cloudFlowAI" role="status">Checking AI</span></div>
               <div class="cloud-flow-box params">
-                <label>graphics card</label><span class="pv" id="cloudReadyGpu">Not selected</span>
-                <label>installed models</label><span class="pv" id="cloudReadyModels">Not checked</span>
-                <label>price checked</label><span class="pv" id="cloudReadyQuote">Not checked</span>
-                <label>computing</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>GPU rental</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>session compute</label><span class="pv" id="cloudReadySession">Unavailable</span>
+                <label>storage after stopping</label><span class="pv" id="cloudReadyStorageAfter">Unavailable</span>
                 <label>automatic stop</label><span class="pv" id="cloudFlowReadyStop">Needs setup</span>
                 <label>your saved files</label><span class="pv" id="cloudFlowReadyFiles">Not checked</span>
-                <label>storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
-                <label>session compute</label><span class="pv" id="cloudReadySession">Unavailable</span>
+              </div>
+              <details class="more"><summary>Models and billing</summary><div class="params">
+                <label>graphics card</label><span class="pv" id="cloudReadyGpu">Not selected</span>
+                <label>installed models</label><span class="pv" id="cloudReadyModels">Not checked</span>
+                <label>provider checked</label><span class="pv" id="cloudReadyQuote">Not checked</span>
+                <label>current storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
                 <label>session allowance</label><span class="pv" id="cloudReadyAllowance">Not set for this session</span>
                 <label>provider billing</label><span class="pv" id="cloudReadyBilling">Not loaded</span>
-              </div>
+              </div></details>
               <p class="hint" id="cloudReadyRecovery" role="status"></p>
               <details class="more"><summary>Storage and spending</summary><p class="hint" id="cloudReadyStorageRates"></p><p class="hint" id="cloudReadyDeadline"></p><p class="hint">Session estimates exclude storage; spending alerts and shutdown policies are not provider billing caps.</p></details>
               <div class="cta"><button class="btn sm" id="cloudFlowSample" type="button" disabled>Try a sample</button>
@@ -5547,7 +5553,7 @@
                 <button class="edtool sm" id="cloudReadyCheck" type="button">Check status</button>
                 <button class="edtool sm" id="cloudFlowRepair" type="button">Set up AI</button></div>
               <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
-              <p class="hint">Stopping computing keeps saved storage and its charges.</p>
+              <p class="hint">Stop preserves saved files; GPU rental ends when RunPod confirms the computer stopped.</p>
             </section>
             <div class="cta cloud-advanced-button"><button class="edtool" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button></div>
             <details class="more" id="cloudSetupEdit" hidden><summary>Change setup</summary>

@@ -167,7 +167,10 @@ function paintFlow(s) {
   $('cloudRunpodReview').hidden = local; $('cloudLocalReview').hidden = !local;
   $('cloudSetupComputer').hidden = visible !== 'costs';
   $('cloudSetupAI').hidden = visible !== 'install';
-  $('cloudSetupProtection').hidden = visible !== 'install' || !s?.podId;
+  const protectionSlot = visible === 'costs' ? $('cloudReviewProtection') : $('cloudFlowInstall');
+  if ($('cloudSetupProtection').parentElement !== protectionSlot) protectionSlot.append($('cloudSetupProtection'));
+  $('cloudSetupProtection').hidden = local || !['install','costs'].includes(visible) || !s?.podId;
+  $('cloudIdleRecommendation').hidden = !!s?.podId;
   $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady;
   $('cloudFlowDetails').hidden = !s?.podId;
   chip('cloudFlowAccount', account ? Number.isFinite(accountBalance?.balance) ? `${money(accountBalance.balance)} credits${accountBalance.stale ? ' · Last checked' : ''}` : 'Credits unavailable' : 'Connect account', account && !accountBalance?.stale ? 'ok' : 'warn');
@@ -191,6 +194,7 @@ function paintFlow(s) {
   $('cloudFlowCostSession').textContent = money(s?.spending?.sessionEstimate);
   $('cloudFlowReadyRate').textContent = stopped ? 'GPU rental stopped' : rate;
   $('cloudFlowReadyStorage').textContent = `${money(s?.storage?.monthlyCurrent)}/month estimated`;
+  $('cloudReadyStorageAfter').textContent = `${money(s?.storage?.monthlyStopped)}/month estimated`;
   $('cloudFlowReadyFiles').textContent = s?.providerUncertain ? 'Storage needs checking' : s?.inventory?.persistence?.verified ? 'Verified saved storage' : s?.storage?.allocatedGB ? `${s.storage.allocatedGB} GB saved storage` : 'Needs checking';
   $('cloudFlowReadyStop').textContent = s?.idleMinutes === 0 ? 'Disabled' : `${s?.idleMinutes || 30} minutes · ${protectedStop ? 'Protected' : 'Needs setup'}`;
   const bundles = flowModels && flowModels.podId === s?.podId ? flowModels.bundles || [] : [];
@@ -517,6 +521,7 @@ function paint(s) {
     : s.worker?.authorized && s.worker?.available ? 'Protected after closing' : 'Automatic stop disabled',
     !s.worker?.error && !s.policyPending && s.worker?.authorized && s.worker?.available ? 'ok' : 'warn');
   if (document.activeElement !== $('cloudComputerIdle')) $('cloudComputerIdle').value = String(s.idleMinutes ?? 30);
+  $('cloudComputerIdleSave').disabled = working || pending || !s.podId || s.providerUncertain || !['RUNNING','EXITED'].includes(pod?.status);
   if (document.activeElement !== $('cloudComputerAlert')) $('cloudComputerAlert').value = s.alertUSD ?? '';
   $('cloudComputerAlertNote').hidden = !s.spending?.alert;
   $('cloudComputerAllocated').textContent = Number.isFinite(s.storage?.allocatedGB) ? `${s.storage.allocatedGB} GB (${s.storage.kind})` : s.storage?.kind || 'Not checked';
