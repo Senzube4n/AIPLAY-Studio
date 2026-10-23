@@ -1594,10 +1594,18 @@ none of them carries a key:
 | `AIPLAY_FAL_BASE`, `AIPLAY_MINIMAX_BASE` | where hosted-music requests go, for a local mock or a relay you run; your key goes there too, so point them only at something you control |
 | `AIPLAY_APPDATA` | where settings and `secrets.json` live (tests use it to stay off your real profile) |
 
-The one credential Studio's own code reads from outside itself is Hugging Face's
-login for the gated LTX 2.5 download: `scripts/fetch_ltx25.py`, which you run by
-hand after `hf auth login`, asks `huggingface_hub` for the token that login
-stored. It downloads, it bills nothing, and nothing in the running Studio uses it.
+Optional LTX 2.5 setup lives in **Models → Set up LTX**. Approve access on the
+publisher's Hugging Face page, connect a read token in Studio, then install.
+Studio uses its existing model-provider secret store and shows whether the saved
+token is protected by Windows DPAPI or by file permissions. A token saved by
+another Studio copy is identified before reuse. It is never returned to the
+browser or put in settings, download URLs, logs or project files.
+
+The installer uses the configured model folders and the catalogue's pinned
+files, with resumable downloads and checksum verification. It does not read
+another program's Hugging Face login or environment credentials. The separate
+`scripts/fetch_ltx25.py` remains a developer fallback using Hugging Face's own
+login cache; normal Studio installation does not require it or a terminal.
 
 ## Settings that are not up for negotiation
 

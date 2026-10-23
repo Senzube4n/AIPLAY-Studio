@@ -816,17 +816,15 @@ export function recommendFor({ capabilities, machine, disk, music = null } = {})
     });
   }
 
-  /* The gated one is reported whatever happens — as the better option somebody
-   * with the hardware may want to go and get by hand, or as the explanation for
-   * why the fast engine is not being offered. Never as a pick. */
+  /* Publisher-gated models are optional extras, never an unfinished step in
+   * the recommended install. Their account setup belongs in Models. */
   for (const g of gatedOnes) {
     notes.push({
-      slot: "video-gated", id: g.cap.id, label: g.cap.label, fit: g.fit,
+      slot: "video-gated", id: g.cap.id, label: g.cap.label, fit: g.fit, optional: true,
       headline: g.fit.state === "wont-run"
-        ? `${g.cap.label} would not run on this machine anyway.`
-        : `${g.cap.label} would run here, and Studio cannot download it for you.`,
-      detail: `${g.fit.why} Its repository is access-gated: the built-in downloader has no token and `
-            + `deliberately no place to keep one. ${g.cap.gated.how}`,
+        ? `Optional ${g.cap.label}: more hardware needed.`
+        : `Optional ${g.cap.label}: publisher access required.`,
+      detail: `${g.fit.why} ${g.cap.gated.how}`,
       how: g.cap.gated.how,
       url: g.cap.gated.url || null,
     });

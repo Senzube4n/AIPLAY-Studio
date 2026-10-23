@@ -34,6 +34,9 @@ node --test server/daw/toolbar_test.js || exit 1
 node --check shared/model-bundles.js || exit 1
 node --check shared/model-profiles.js || exit 1
 node --check server/setup-plan.js || exit 1
+node --check server/local-model-access.js || exit 1
+node --check web/local-model-access.js || exit 1
+node --test server/local-model-access_test.js server/local-model-access-ui_test.js || exit 1
 node --check server/engine/remote-models.js || exit 1
 node --check server/engine/workflow-evidence.js || exit 1
 node --check web/setup-plan.js || exit 1

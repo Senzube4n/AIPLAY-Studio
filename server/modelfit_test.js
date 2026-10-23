@@ -373,9 +373,12 @@ ok("24 GB: a fitting row still shows its evidence",
   /24 GB card, 64 GB RAM/.test(big.badges.get("video")), big.badges.get("video"));
 ok("24 GB: the Fast setting's pick shows a slot word a person reads, not the id 'video-fast'",
   /class="fitslot">fast video</.test(big.html) && !/class="fitslot">video-fast</.test(big.html));
-ok("24 GB: the gated engine is reported and never recommended",
-  /cannot download it for you/.test(big.html) && !/class="fitslot">video<\/span>\s*<b>[^<]*LTX/.test(big.html),
-  "LTX 2.5 has no button; naming it as a pick is the dead end this feature exists to remove");
+ok("24 GB: optional LTX has a guided setup action, separate from starter picks",
+  /<summary>Optional video models<\/summary>/.test(big.html)
+    && /data-local-model-access="videoLtx"/.test(big.html)
+    && !/hf auth login|fetch_ltx25|python environment/.test(big.html)
+    && !/class="fitslot">video<\/span>\s*<b>[^<]*LTX/.test(big.html),
+  "optional account setup must not look like an unfinished standard installation");
 
 /* ── no NVIDIA card ────────────────────────────────────────────────────── */
 const none = render(noCardMachine);

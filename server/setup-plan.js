@@ -11,7 +11,12 @@ import { workflowEvidenceKey, curatedArtifactKey } from './engine/workflow-evide
 
 export function selectionFor(config, target) {
   const saved = target === 'runpod' ? config.cloudSetup?.plan : config.modelSetup?.local;
-  return validModelSelection(saved) ? { ...saved } : defaultModelSelection(target === 'runpod' ? config.cloudSetup?.goal : 'all', config.music);
+  if (validModelSelection(saved)) return { ...saved };
+  const selection = defaultModelSelection(target === 'runpod' ? config.cloudSetup?.goal : 'all', config.music);
+  // Fresh local plans must not preselect the access-gated optional LTX kit.
+  // Saved local choices and the existing cloud plan keep their own semantics.
+  if (target === 'local') delete selection.video;
+  return selection;
 }
 export function setupPlan({ selection, target, machine, localFiles = [] }) {
   if (!['local', 'runpod'].includes(target) || !validModelSelection(selection)) throw Error('Choose a model for each selected category.');

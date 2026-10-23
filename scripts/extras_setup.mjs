@@ -27,7 +27,6 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { config } from "../server/config.js";
 import { CATALOG, modulesOf } from "../server/models.js";
 import { runLines, installLines, venvOf, SETTING_WORDS, PYTHON_MIN, ENV_RESTART } from "../server/lrc.js";
@@ -139,46 +138,16 @@ for (const t of TARGETS) {
   line();
 }
 
-/* The gated model is the same shape of problem — a thing Studio cannot fetch —
- * and it is the ONE case that does want ComfyUI's own Python, because that is
- * where huggingface_hub lives. Printed here so the two never get confused. */
+/* Account-gated models have an in-app flow. They are not missing Python
+ * packages and should not send a normal installation back to a terminal. */
 const ltx = CATALOG.find((c) => c.gated);
 if (ltx && (!quiet || missing)) {
-  line(`  ALSO  ${ltx.label} — access-gated, so there is no button for it either.`);
-  line(`        Accept the licence at ${ltx.gated.url}, then, with COMFYUI's python`);
-  line(`        (this one, because it is where huggingface_hub is installed):`);
-  /* ⚠ `hf.exe` DOES NOT LIVE BESIDE python.exe ON THE ROUTE THIS GUIDE
-   * RECOMMENDS.
-   *
-   * This used to be `dirname(config.python) + "hf.exe"`, which is right for
-   * exactly one of the two layouts. pip puts console scripts in
-   * `<sys.prefix>\Scripts`, and the two layouts differ in where that lands
-   * relative to the interpreter:
-   *
-   *   from source   …\venv\Scripts\python.exe   → …\venv\Scripts\hf.exe   ✓ beside
-   *   PORTABLE      …\python_embeded\python.exe → …\python_embeded\Scripts\hf.exe
-   *
-   * So the printed command was wrong for the portable build — the build
-   * INSTALL.md sends beginners to, in a section headed "the easy route". The
-   * copied line fails with "not recognized", on the one step that has no
-   * button, for the reader least able to work out why.
-   *
-   * Probed rather than guessed a second time: whichever file is actually on
-   * this disk is the one printed. If neither is there the CLI genuinely is not
-   * installed, and saying THAT is more use than printing a path to nothing. */
-  const dir = path.dirname(config.python);
-  const hf = [path.join(dir, "hf.exe"), path.join(dir, "Scripts", "hf.exe")]
-    .find((p) => { try { return existsSync(p); } catch { return false; } });
-  if (hf) {
-    line(`          "${hf}" auth login`);
-  } else {
-    line(`          (no hf.exe found — huggingface_hub is not installed in that python)`);
-    line(`          "${config.python}" -m pip install huggingface_hub`);
-    line(`          then run "auth login" from ${path.join(dir, "Scripts")}\\hf.exe`);
-  }
-  line(`          "${config.python}" scripts/fetch_ltx25.py`);
-  line(`        ⚠ \`hf auth login\`, not \`huggingface-cli login\` — the latter was removed`);
-  line(`        in huggingface_hub 1.x and now refuses to run rather than warning.`);
+  line(`  OPTIONAL  ${ltx.label}`);
+  line(`        Open Studio > Models > Set up LTX. Approve publisher access,`);
+  line(`        connect a Hugging Face read token there, then choose Install.`);
+  line(`        Studio handles the folders, resume and file verification.`);
+  line(`        Licence and access: ${ltx.gated.url}`);
+  line(`        You can skip LTX and use the rest of Studio.`);
   line();
 }
 

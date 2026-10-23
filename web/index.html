@@ -6,6 +6,7 @@
 <title>AIPLAY Studio</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="local-model-access.css">
 <link rel="stylesheet" href="image-editor.css">
 <link rel="stylesheet" href="router.css">
 <link rel="stylesheet" href="avatar-shell.css">
@@ -4924,6 +4925,31 @@
       <p class="hint">Only the music engine is required. Everything else is optional
         and downloads when you ask for it (never on its own).</p>
       <details class="more"><summary>Choose models and computer</summary><div id="localModelPlan"></div></details>
+      <section id="localModelAccess" hidden class="pcard" aria-labelledby="ltxAccessTitle" tabindex="-1">
+        <div class="cta"><h3 id="ltxAccessTitle">LTX 2.5 setup</h3><span class="chip">Optional</span><button class="edtool sm" type="button" id="ltxAccessClose">Close</button></div>
+        <p class="pcard-sub">Connect your Hugging Face account to install this optional video model.</p>
+        <h4>1. Publisher access</h4>
+        <a class="edtool sm" href="https://huggingface.co/Lightricks/LTX-2.5" target="_blank" rel="noopener noreferrer">Open model page</a>
+        <p class="hint">Accept the publisher's terms on Hugging Face, using the account that owns your token.</p>
+        <h4>2. Connect Hugging Face</h4>
+        <p class="hint" id="ltxAccessSaved"></p><span class="chip" id="ltxAccessStorage">No token saved</span>
+        <form id="ltxAccessForm">
+          <label class="flabel" for="ltxAccessToken">Read token</label>
+          <input class="line" id="ltxAccessToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="500" placeholder="hf_…">
+          <div class="cta"><button class="edtool sm" type="submit" id="ltxAccessConnect">Connect token</button><button class="edtool sm" type="button" id="ltxAccessForget">Forget token</button><button class="edtool sm" type="button" id="ltxAccessCheck">Check access</button></div>
+        </form>
+        <details class="more"><summary>Token and storage</summary>
+          <p><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a read token</a> for Lightricks/LTX-2.5; write permission is not needed.</p>
+          <p>A fine-grained token must include read access to this gated repository after your account has been granted access.</p>
+          <p class="hint" id="ltxAccessProtection"></p>
+          <p class="hint">This saved token is shared with Studio's Hugging Face model browser.</p>
+        </details>
+        <h4>3. Install files</h4>
+        <div class="params"><label>Download</label><span class="pv" id="ltxAccessTotal">Checking…</span><label>Missing</label><span class="pv" id="ltxAccessMissing">Checking…</span><label>Destination</label><span class="pv" id="ltxAccessDestination">Checking…</span><label>Free space</label><span class="pv" id="ltxAccessFree">Checking…</span></div>
+        <label class="tog"><input type="checkbox" id="ltxAccessTerms"> Publisher terms accepted</label>
+        <div class="cta"><button class="btn sm" type="button" id="ltxAccessInstall">Install LTX</button><button class="edtool sm" type="button" id="ltxAccessCancel" hidden>Cancel download</button><span class="chip" id="ltxAccessState" role="status" aria-live="polite">Not connected</span></div>
+        <p class="hint" id="ltxAccessMessage"></p>
+      </section>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>

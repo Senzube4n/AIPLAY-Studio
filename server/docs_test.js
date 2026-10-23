@@ -262,7 +262,7 @@ console.log("\n  the default video engine, read from the source literal");
   };
   ok("the shipped default is a model Studio can download",
     !CATALOG.find((c) => c.id === { h3: "video", ltx: "videoLtx" }[shipped])?.gated,
-    `${label(shipped)} is gated — a gated repo has no button, so a default pointing at it is a dead end`,
+    `${label(shipped)} needs account setup; the standard default must download without authentication`,
     label(shipped));
 
   const others = { h3: "LTX 2.5", ltx: "MiniMax H3" }[shipped];

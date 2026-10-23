@@ -55,6 +55,7 @@
  */
 import { MODEL_BUNDLES, ACE_VARIANTS } from '../shared/model-bundles.js';
 import { MODEL_PROFILES } from '../shared/model-profiles.js';
+import { fetchModelFile } from './engine/model-catalog.js';
 import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter, once } from "node:events";
@@ -2361,21 +2362,13 @@ export const CATALOG = [
       note: "Studio's own provenance ledger and embedded C2PA-style markers are on the right side of §6 — they add disclosure rather than removing it. §2.1 is about YOUR revenue, not the clip's price: below $10M a year, selling the clip needs nothing from Lightricks.",
     },
 
-    /* 🔴 GATED. Unlike everything else in this catalogue, these files 401 to an
-     * anonymous request: Lightricks requires you to accept the licence on the
-     * model page and authenticate. The downloader below has no credential path
-     * and MUST NOT grow one — a token belongs in the user's own keychain, not in
-     * this app's config. `scripts/fetch_ltx25.py` does the fetch instead, reading
-     * the token the hf CLI stored, and never printing or copying it.
-     *
-     * The command here is `hf auth login`, NOT `huggingface-cli login`. The
-     * latter is dead as of huggingface_hub 1.x -- it refuses outright rather
-     * than warning and continuing -- and this text told people to run it, so
-     * the very first step failed with an error that looked nothing like a
-     * licence problem. Anyone following it could not get past step one. */
+    /* Access stays between the person and Hugging Face. The optional guided
+     * setup uses an explicitly connected read key from Studio's existing vault,
+     * never settings.json. Ordinary catalogue downloads still refuse this row;
+     * only the local access controller can mint its short-lived permission. */
     gated: {
       url: "https://huggingface.co/Lightricks/LTX-2.5",
-      how: "Accept the licence on the model page, then in the ComfyUI python environment run `hf auth login` followed by `python scripts/fetch_ltx25.py`. About 40 GB.",
+      how: "Optional LTX model. Open Models > Set up LTX, approve access on the publisher's page, connect Hugging Face, then install. About 40 GB.",
     },
 
     /* ⚠ DELIBERATELY NO `region` FIELD.
@@ -3812,6 +3805,24 @@ export function markRequired(rows, { music = config.music, api = config.api } = 
   }));
 }
 
+// Opaque, short-lived server permissions cannot be constructed from a JSON
+// request. The token lives only in this WeakMap and the active download closure.
+const localLtxPermissions = new WeakMap();
+export function authorizeLocalLtxDownload(token, { acceptLicense = false } = {}) {
+  if (acceptLicense !== true) throw Error('Review and accept the LTX model terms first.');
+  if (typeof token !== 'string' || token.length < 10 || token.length > 500 || !/^hf_[A-Za-z0-9_.-]+$/.test(token))
+    throw Error('Connect a valid Hugging Face read token.');
+  const permission = Object.freeze({});
+  localLtxPermissions.set(permission, { token, expiresAt: Date.now() + 60_000 });
+  return permission;
+}
+function localLtxError(error, auth) {
+  if (!auth) return error;
+  const message = String(error?.message || error).split(auth.token).join('[redacted]')
+    .replace(/\bhf_[A-Za-z0-9_.-]+\b/g, '[redacted]');
+  return new Error(message);
+}
+
 export class ModelManager extends EventEmitter {
   constructor() {
     super();
@@ -3980,7 +3991,7 @@ export class ModelManager extends EventEmitter {
    * `.part` and only moved into place once the size matches exactly, so an
    * interrupted run can never leave a truncated file that looks complete.
    */
-  async download(id, { acceptRegion = false, exact = false } = {}) {
+  async download(id, { acceptRegion = false, exact = false, localAccess = null } = {}) {
     let cap = CATALOG.find((c) => c.id === id);
     if (!cap) throw new Error(`unknown capability: ${id}`);
     if (exact) cap = { ...cap, files: cap.files.map(f => ({ ...f, alt: [] })) };
@@ -3996,11 +4007,14 @@ export class ModelManager extends EventEmitter {
     /* A gated repo needs an accepted licence and a token, and this downloader
      * deliberately has neither. Failing here with instructions beats a 401 that
      * looks like a network error. */
-    if (cap.gated) {
+    const auth = id === 'videoLtx' && localAccess && localLtxPermissions.get(localAccess);
+    if (cap.gated && (!auth || auth.expiresAt < Date.now())) {
       const e = new Error(cap.gated.how);
       e.gated = cap.gated;
       throw e;
     }
+    if (auth && cap.files.some(f => !MODEL_BUNDLES.ltx25.files.some(p => p.url === f.url)))
+      throw Error('LTX setup only downloads the pinned publisher bundle.');
     if (cap.compatibilityKind === "h3-w6a8") {
       const compatibility = probeH3W6a8(config);
       if (!compatibility.downloadable) {
@@ -4029,7 +4043,7 @@ export class ModelManager extends EventEmitter {
     if (previous) {
       if (!this.cancelled.has(id)) return { alreadyRunning: true };
       await previous;
-      return this.download(id, { acceptRegion, exact });
+      return this.download(id, { acceptRegion, exact, localAccess });
     }
     // Split profiles share VAE/encoders and therefore the same resumable .part
     // files. Reserve synchronously before filesystem awaits to prevent two
@@ -4042,14 +4056,15 @@ export class ModelManager extends EventEmitter {
     let release;
     this.#pending.set(id, new Promise((resolve) => { release = resolve; }));
     try {
-      return await this.#download(id, cap);
+      if (auth) localLtxPermissions.delete(localAccess);
+      return await this.#download(id, cap, auth);
     } finally {
       this.#pending.delete(id);
       release();
     }
   }
 
-  async #download(id, cap) {
+  async #download(id, cap, auth = null) {
     this.cancelled.delete(id);
     /* This run's token: a run that was cancelled and is still unwinding must
      * not write "failed" over a new run of the same row started meanwhile. */
@@ -4070,7 +4085,7 @@ export class ModelManager extends EventEmitter {
         // Re-read after each completed download; shared files may have landed
         // while this request waited for another capability's download.
         if (await filePresent(f, await catalogShelf())) continue;
-        await this.#one(id, f, () => doneBytes, (n) => { doneBytes = n; });
+        await this.#one(id, f, () => doneBytes, (n) => { doneBytes = n; }, auth);
         doneBytes += f.bytes;
       }
       this.progress.delete(id);
@@ -4078,6 +4093,7 @@ export class ModelManager extends EventEmitter {
       this.emit("ready", id);
       return { ok: true };
     } catch (err) {
+      err = localLtxError(err, auth);
       /* Cancelled: nothing failed. cancel() already cleared the row. */
       if (!mine()) return { cancelled: true };
       if (this.cancelled.has(id)) {
@@ -4093,7 +4109,7 @@ export class ModelManager extends EventEmitter {
     }
   }
 
-  async #one(id, f, getBase, _setBase) {
+  async #one(id, f, getBase, _setBase, auth = null) {
     if (fp4Blocked(f)) {
       throw new Error(`${path.basename(f.dest)} is an fp4 build, which needs an NVIDIA card. `
         + "It was not downloaded. Use another build of it from the Models screen.");
@@ -4114,16 +4130,25 @@ export class ModelManager extends EventEmitter {
       let stalled = false, timer = null;
       const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; ctl.abort(); }, DOWNLOAD_STALL_MS); };
       const name = path.basename(f.dest);
-      let out = null;
+      let out = null, writerError = null;
       try {
         arm();
-        const res = await fetch(f.url, { signal: ctl.signal, ...(from ? { headers: { Range: `bytes=${from}-` } } : {}) });
+        const init = { signal: ctl.signal, headers: { ...(from ? { Range: `bytes=${from}-` } : {}),
+          ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}) } };
+        let res;
+        try { res = auth ? await fetchModelFile(f.url, init) : await fetch(f.url, init); }
+        catch (error) { if (auth && !ctl.signal.aborted) throw Error('The Hugging Face download connection failed. Try again to resume.'); throw error; }
+        if (auth && [401,403].includes(res.status)) throw Error('Hugging Face access was denied. Check the connected key and approve access on the model page.');
         if (!res.ok && res.status !== 206) throw new Error(`${name}: HTTP ${res.status}`);
         // A server that ignores Range answers 200 with the whole file; restarting is
         // then the only correct thing to do, rather than appending to a partial.
         if (from && res.status !== 206) from = 0;
 
         out = createWriteStream(part, { flags: from ? "a" : "w" });
+        // A very early Cancel can destroy a writer before its pending open or
+        // first write completes. Always own its error event; a disk error also
+        // aborts the network rather than continuing to buffer into a dead file.
+        out.on('error', error => { writerError = error; ctl.abort(); });
         let received = from;
         const base = getBase();
         for await (const chunk of res.body) {
@@ -4146,6 +4171,7 @@ export class ModelManager extends EventEmitter {
         out = null;
       } catch (err) {
         if (this.cancelled.has(id)) throw new Error("cancelled");
+        if (writerError) throw writerError;
         if (stalled) {
           throw new Error(`${name}: the server sent nothing for ${DOWNLOAD_STALL_MS / 1000} s, so the download was stopped. `
             + "What arrived is kept: press Download again to continue from there.");

@@ -79,7 +79,8 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
       const button = el('button', 'Open Models', 'edtool'); button.type = 'button'; button.addEventListener('click', () => document.querySelector('.rail [data-view="models"]')?.click()); rows.append(button);
       for (const p of data.profiles.filter(p => !p.localFilesPresent)) {
         // Existing gated/native paths stay in Models, where their own setup is authoritative.
-        const button = el('button', p.id === 'ltx25' ? 'LTX access setup in Models' : `Install ${p.label}`, 'edtool sm'); button.type = 'button'; button.disabled = !modeMatches || p.id === 'ltx25';
+        const button = el('button', p.id === 'ltx25' ? 'Set up LTX' : `Install ${p.label}`, 'edtool sm'); button.type = 'button'; button.disabled = !modeMatches;
+        if (p.id === 'ltx25') button.setAttribute('data-local-model-access', 'videoLtx');
         if (p.id !== 'ltx25') button.addEventListener('click', async () => {
           if (!await appConfirm(`Install ${p.label} on this PC (${gb(p.totalBytes)})? Review its model terms first.`, { title: 'Install local model', ok: 'Accept terms and install' })) return;
           button.disabled = true;

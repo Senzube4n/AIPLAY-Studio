@@ -149,11 +149,10 @@ const FLAGS = [
   {
     key: "gated",
     has: (c) => !!c.gated,
-    heading: "⚠ **gated**",
+    heading: "**Optional models requiring an account**",
     mark: () => "gated repo",
     body: (caps) => caps.map((c) =>
-      `**${modelName(c.label)}.** The repository is access-gated, so the built-in downloader cannot `
-      + `fetch it — it has no token and deliberately nowhere to keep one. ${c.gated.how} `
+      `**${modelName(c.label)}.** This is optional, not a required Studio installation step. ${c.gated.how} `
       + `Licence and access: ${c.gated.url}`).join(" "),
   },
   {

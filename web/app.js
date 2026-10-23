@@ -3,6 +3,7 @@ import { revealSetting } from './settings-sections.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
 import { mountH3RefMods } from './h3-refmods.js';
 import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
+import { updateLocalModelAccess } from './local-model-access.js';
 import { createVectorizer } from './vectorize-controls.js';
 import { mountFullPlayerScore } from './full-player-score.js';
 import { musicBatchIdea } from './music-batch-spec.js';
@@ -8576,9 +8577,9 @@ async function loadModels() {
           // enables it; the server refuses regardless, so this is the honest
           // affordance rather than the enforcement.
           : c.gated
-            // The built-in downloader has no credential path and must not grow
-            // one — a token belongs in the user's keychain, not this app.
-            ? `<span class="mwarn">needs a HuggingFace login</span>`
+            ? c.id === "videoLtx"
+              ? `<button class="btn sm" type="button" data-local-model-access="videoLtx">Set up LTX</button>`
+              : `<span class="mwarn">needs publisher access</span>`
             : `<button class="btn sm" data-mget="${c.id}"${c.region ? " disabled" : ""}>Download ${gb(need)}</button>`;
     return `
       <div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
@@ -8606,7 +8607,7 @@ async function loadModels() {
         ${/* Gated repo: the publisher requires an accepted licence and a token.
              Say how, rather than showing a button that fails with a 401 that
              looks like a network problem. */
-          c.gated && !c.ready ? `<div class="mregion">
+          c.gated && c.id !== "videoLtx" && !c.ready ? `<div class="mregion">
           <b>Requires a HuggingFace account</b>
           <p>${esc(c.gated.how)}</p>
           <p><a href="${esc(c.gated.url)}" target="_blank" rel="noopener">Open the model page to accept the licence</a></p>
@@ -8639,6 +8640,7 @@ async function loadModels() {
       </div>`;
   });
   $("modelList").innerHTML = groupModelCards(d, htmls);
+  if (typeof updateLocalModelAccess === "function") updateLocalModelAccess(d);
 
   $("modelsNote").textContent = d.python?.packages && !d.python.packages.torch
     ? (state.musicOnly ? "Native music mode needs no Python. Start full Studio for optional image, video and stem tools." : `No python found at ${d.python.path}: the stem and lyric features need it.`)
@@ -8667,6 +8669,7 @@ async function loadModels() {
   }
 }
 let nativeModelsPoll = null;
+document.addEventListener("aiplay:local-model-refresh", () => loadModels());
 
 /* The catalogue in collapsible sections, labelled and ordered by the server.
  * Music & audio starts open; after that each section is exactly what the

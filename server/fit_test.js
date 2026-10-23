@@ -258,8 +258,8 @@ ok("a no-card machine that misses the RAM floor is still told so",
 console.log("\n── the gated model must never be recommended ────────────────────");
 
 /* Six machines, including two absurd ones, because this is the rule that broke.
- * A recommendation is a button somebody presses; there is no button for a gated
- * repo, and there deliberately never will be. */
+ * Publisher account setup is an explicit optional action, never a starter
+ * recommendation or an automatic download. */
 const ALL = [
   ...Object.values(MACHINES),
   readMachine({ name: "RTX 5090", totalMb: 32760, usedMb: 0 }, { totalMb: 131072, usedMb: 0 }),
@@ -279,9 +279,11 @@ for (const machine of ALL) {
 ok("no machine, however large, is ever recommended a gated model",
   leaked.length === 0, leaked.join("; "));
 
-ok("the gated one is still MENTIONED, with the publisher's own hand-fetch steps",
-  rec.rig.out.notes.some((n) => n.slot === "video-gated" && /hf auth login/.test(n.detail)),
-  "a model somebody could get by hand should not vanish from the page");
+ok("the gated one is an OPTIONAL aside with guided setup rather than terminal commands",
+  rec.rig.out.notes.some((n) => n.slot === "video-gated" && n.optional === true
+    && /Optional/.test(n.headline) && /Models/.test(n.detail)
+    && !/hf auth login|fetch_ltx25|python environment/.test(n.detail)),
+  "optional model access must not look like an unfinished standard installation");
 
 /* ── and the default that started it ──────────────────────────────────────
  *

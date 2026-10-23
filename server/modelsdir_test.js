@@ -232,7 +232,7 @@ test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
     config.torchBackend = keep.t; config.gpu = keep.g;
   }
   const models = readFileSync(new URL("./models.js", import.meta.url), "utf8");
-  assert.match(models, /async #one\(id, f, getBase, _setBase\) \{\r?\n\s+if \(fp4Blocked\(f\)\) \{/, "checked before a byte is fetched");
+  assert.match(models, /async #one\(id, f, getBase, _setBase, auth = null\) \{\r?\n\s+if \(fp4Blocked\(f\)\) \{/, "checked before a byte is fetched, including authenticated downloads");
 });
 
 /* THE CATALOGUE AND THE ENGINE AGREE ON AN AMD CARD, with the files a real AMD
