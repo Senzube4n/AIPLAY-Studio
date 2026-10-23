@@ -239,7 +239,7 @@ const H3_FOUR = {
   turboMaxSteps: 12, turbo4MaxSteps: 5, turbo3MaxSteps: 3,
   turboLora: LORAS.fl2v4, refTurboLora: LORAS.ref4, turboLora4: LORAS.fl2v4, refTurboLora4: LORAS.ref4, turboLora3: LORAS.fl2v4,
   turboShiftByLora: Object.fromEntries(Object.values(LORAS).map((n) => [n, {}])) };
-/** A PC set up from the Models screen: the 4-step files, and pick() fell back to them. */
+/** A legacy four-step-only PC: pick() fell back to its older files. */
 const FOUR_ONLY = { modelsDir: "/nowhere", modelsAlso: [], video: { engines: { h3: H3_FOUR } } };
 /** A rig that fetched the 8-step files by hand, as the owner's did. */
 const EIGHT = { ...FOUR_ONLY, video: { engines: { h3: { ...H3_FOUR, turboLora: LORAS.fl2v8, refTurboLora: LORAS.ref8 } } } };
@@ -321,9 +321,29 @@ test("9: a speed-up file that is not on the PC at all is named as missing, with 
   assert.match(r.why, /not on this PC.*Download it from the Models screen \(“Video clips — 4-step speed-up for H3/);
   const eight = L.speedUpCheck({ engine: "h3", steps: 8, refs: false }, { cfg: EIGHT, onDisk: () => false });
   assert.match(eight.why, /Download it from the Models screen \(“Video clips — 8-step speed-up for H3/);
-  /* The ref2v 8-step file is still one the Models screen does not offer. */
+  /* This historical fixture requests V1.0, which the catalogue does not offer. */
   const unoffered = L.speedUpCheck({ engine: "h3", steps: 8, refs: true }, { cfg: EIGHT, onDisk: () => false });
   assert.match(unoffered.why, /The Models screen does not offer it, so leave this order unaccepted/);
+});
+
+test("9: the current V1.1 reference build is offered for a legacy overrun or a missing file", () => {
+  const ref11 = "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors";
+  const current = { ...FOUR_ONLY, video: { engines: { h3: { ...H3_FOUR,
+    turboShiftByLora: { ...H3_FOUR.turboShiftByLora, [ref11]: { video: 12, audio: 3 } },
+  } } } };
+  const overrun = L.speedUpCheck({ engine: "h3", steps: 8, refs: true }, { cfg: current, onDisk: hasFour });
+  assert.equal(overrun.problem, "overrun");
+  assert.ok(overrun.needs.includes(ref11));
+  assert.match(overrun.why, /ref2v_turbo_8step_v1\.1_768p_comfyui_bf16\.safetensors, and the Models screen offers it \(“Video references/);
+  assert.match(overrun.why, /used as soon as the download lands/);
+  assert.match(overrun.why, /ask them to order 4 steps/);
+  assert.doesNotMatch(overrun.why, /Models screen does not offer it/);
+  const selected = { ...current, video: { engines: { h3: { ...current.video.engines.h3, refTurboLora: ref11 } } } };
+  const missing = L.speedUpCheck({ engine: "h3", steps: 8, refs: true }, { cfg: selected, onDisk: () => false });
+  assert.equal(missing.problem, "missing");
+  assert.equal(missing.loads, ref11);
+  assert.match(missing.why, /Download it from the Models screen \(“Video references/);
+  assert.doesNotMatch(missing.why, /Models screen does not offer it/);
 });
 
 test("9: the errand's own engine decides the path — a cast scene rides the reference path", () => {

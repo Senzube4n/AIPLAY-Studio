@@ -142,7 +142,7 @@ test("3: with references and no count named, the reference build's own count run
   const low = plan({ prompt: "<Picture 1> is Mira. Mira runs", refImages: ["a.png"], steps: 4 });
   assert.equal(low.steps, 4, "a count the request named is kept");
   assert.equal(low.notes.find((n) => n.id === "steps-measured")?.text,
-    "Keeping a character was measured on the 8-step reference build at 8 steps; this runs 4 on the 4-step reference build.");
+    "Keeping a character was measured on the 8-step V1.0 reference build at 8 steps; this runs 4 on the 4-step reference build.");
   assert.match(low.character.receipt, /\+ 4 steps \(measured with 8\)$/);
   const text = plan({ steps: 8 });
   assert.equal(text.character.keeps, false);
@@ -160,7 +160,7 @@ test("3: the named disks plan the same on NVIDIA's per-path rule and on main's (
       const p = videoPlan({ prompt: "<Picture 1> is Mira. Mira runs", refImages: ["a.png"] }, { engineKey: "h3", eng: e });
       assert.equal(p.refusal ?? null, null, `${name}, ${rule}: renders`);
       assert.equal(p.steps, steps, `${name}, ${rule}: the reference build's own count`);
-      assert.equal(p.character.receipt, `1 reference picture + ${steps} steps${steps === 8 ? "" : " (measured with 8, not on this PC)"}`, `${name}, ${rule}`);
+      assert.equal(p.character.receipt, `1 reference picture + ${steps} steps${steps === 8 ? "" : " (measured on 8-step V1.0; different build selected)"}`, `${name}, ${rule}`);
     }
   }
 });
@@ -173,18 +173,18 @@ test("3: on a disk with only the 4-step reference file, keeping a character is s
   assert.equal(p.steps, 4, "the disk's own reference count");
   assert.equal(p.character.measuredSteps, 8, "the measured count is the A/B's, not the disk's");
   assert.equal(p.character.measuredHere, false);
-  assert.equal(p.character.receipt, "1 reference picture + 4 steps (measured with 8, not on this PC) + song (lip-sync)");
-  assert.equal(p.character.hint, "Keeping a character was measured on the 8-step reference build, which is not on this PC: "
-    + "this runs the 4-step reference build.");
+  assert.equal(p.character.receipt, "1 reference picture + 4 steps (measured on 8-step V1.0; different build selected) + song (lip-sync)");
+  assert.equal(p.character.hint, "Keeping a character was measured on the 8-step V1.0 reference build; this selects a "
+    + "different build (the 4-step reference build).");
   assert.equal(p.notes.find((n) => n.id === "steps-measured")?.text,
-    "Keeping a character was measured on the 8-step reference build at 8 steps; this runs 4 on the 4-step reference build. "
-    + `That file (${KEEP_MEASURED.file}, in models/loras) is not on this PC, and the Models screen does not fetch it yet.`);
+    "Keeping a character was measured on the 8-step V1.0 reference build at 8 steps; this runs 4 on the 4-step reference build. "
+    + "The selected file differs from the measured V1.0 build.");
   const noSong = plan({ prompt: "<Picture 1> is Mira. Mira runs", refImages: ["a.png"] }, { eng: DISK4 });
-  assert.match(noSong.character.hint, /^If they sing, choose Song under the clip \(lip-sync\) and where the sung line starts\. Keeping a character was measured on the 8-step reference build, which is not on this PC/,
-    "the missing build is said after the first line");
+  assert.match(noSong.character.hint, /^If they sing, choose Song under the clip \(lip-sync\) and where the sung line starts\. Keeping a character was measured on the 8-step V1.0 reference build; this selects a different build/,
+    "the different build is said after the first line");
   /* The Fast chip while keeping: TaoMate is text-only, so the reference build's count, said. */
   assert.deepEqual(keepFast(DISK8), { steps: 4, note: "Fast with a character: 4 steps on the 4-step reference build (the TaoMate "
-    + "3-step build takes no pictures). Keeping a character was measured at 8 steps on the 8-step reference build." });
+    + "3-step build takes no pictures). Keeping a character was measured at 8 steps on the 8-step V1.0 reference build." });
   assert.equal(keepFast(DISK4).steps, 4);
   assert.equal(keepFast(E.ltx ?? {}), null, "no chips, no note");
   assert.match(read("./index.js"), /keepFast: k === "h3" \? keepFast\(e\) : null,/, "/api/status sends it for H3");
@@ -273,7 +273,7 @@ test("3: the receipt and the Keep line, in the server's words", () => {
 test("3: Song under the clip says what it does on each engine; lip-sync only where mouths follow", () => {
   const h3With = plan({ prompt: "<Picture 1> is Mira. Mira sings", refImages: ["a.png"] }).songLine;
   assert.equal(h3With.meta, "lip-sync · optional");
-  assert.match(h3With.hint, /^The mouth follows this stretch of the song \(measured with pictures of the singer\)/);
+  assert.match(h3With.hint, /^Lip-sync was measured with pictures of the singer on the 8-step V1\.0 reference build; other builds are unverified\./);
   const h3Text = plan({ prompt: "a lamp" }).songLine;
   assert.equal(h3Text.meta, "lip-sync with pictures · optional");
   assert.match(h3Text.hint, /from words alone lip-sync is untested\./);

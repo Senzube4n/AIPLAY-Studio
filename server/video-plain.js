@@ -136,14 +136,12 @@ export function speedupNeeded(eng, { steps, refs = false } = {}) {
      * another count (the "Video references" row's 4-step v0.1, which
      * refTurboLora takes before any fl2v file): the 8-step speed-up row
      * would not change what loads, and it may be on disk already, so it is
-     * not offered. The 8-step reference build is the fix, and no Models row
-     * fetches it yet. */
+     * not offered. The Video references row now fetches the correct build. */
     const made = loraStepsOf(lora);
     if (!use4 && /ref2v/i.test(lora) && Number.isFinite(made) && made !== 8) {
-      return { build: 8, row: null,
-        error: `${n} steps with reference pictures needs the 8-step reference build, which is not on this PC (the Models `
-          + `screen does not fetch it yet). The reference build here is made for ${made} steps: pick ${made} steps, or `
-          + "leave out the reference pictures." };
+      return { build: 8, row: "videoRefs",
+        error: `${n} steps with reference pictures needs the 8-step reference build, which is not on this PC. Download `
+          + `Video references in Models, or pick ${made} steps for the reference build here.` };
     }
     return need(use4 ? 4 : 8);
   }
@@ -406,10 +404,9 @@ function decoderWords(b, eng) {
 /* THE MEASURED SETUP for keeping a character (the REWIND A/B, 2026-09-24,
  * DIRECTING.md §2): the ref2v 8-step v1.0 reference build at 8 steps, with
  * res_multistep, the fp16 video decoder and the song under the clip. A
- * constant, apart from workflow.js referenceSteps (the count THIS disk runs):
- * the Models screen's "Video references" fetches only the 4-step v0.1 file,
- * and on that disk keeping a character runs a setup nobody measured, which
- * the words say rather than calling it measured. */
+ * constant, apart from workflow.js referenceSteps (the count THIS disk runs).
+ * The newer V1.1 default has a separate movement comparison, not the V1.0
+ * identity and singing calibration; the words keep that distinction. */
 export const KEEP_MEASURED = Object.freeze({
   steps: 8,
   decoder: "fp16",
@@ -440,10 +437,10 @@ export function personaMissing(name, lost) {
 export function songUnderSay(engineKey, { label = engineKey, pictures = 0 } = {}) {
   if (engineKey === "h3") {
     return pictures > 0
-      ? { meta: "lip-sync · optional", hint: "The mouth follows this stretch of the song (measured with pictures of the "
-          + "singer): it sits under the clip while it renders. Set “start at” to where the sung line begins." }
-      : { meta: "lip-sync with pictures · optional", hint: "With pictures of the singer (Keep my character) the mouth "
-          + "follows this stretch of the song (measured); from words alone lip-sync is untested. Set “start at” to where "
+      ? { meta: "lip-sync · optional", hint: "Lip-sync was measured with pictures of the singer on the 8-step V1.0 "
+          + "reference build; other builds are unverified. Set “start at” to where the sung line begins." }
+      : { meta: "lip-sync with pictures · optional", hint: "With pictures of the singer, lip-sync was measured on the "
+          + "8-step V1.0 reference build; from words alone lip-sync is untested. Set “start at” to where "
           + "the sung line begins." };
   }
   if (engineKey === "ltx") {
@@ -481,7 +478,7 @@ export function keepFast(eng) {
   }
   return { steps, note: `Fast with a character: ${steps} steps on ${buildWords(eng, { steps, refs: true })}`
     + (fast === 3 ? " (the TaoMate 3-step build takes no pictures)" : "")
-    + `. Keeping a character was measured at ${KEEP_MEASURED.steps} steps on the ${KEEP_MEASURED.steps}-step reference build.` };
+    + `. Keeping a character was measured at ${KEEP_MEASURED.steps} steps on the ${KEEP_MEASURED.steps}-step V1.0 reference build.` };
 }
 
 /**
@@ -508,7 +505,7 @@ function characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, 
     : who || ownUnnamed.length < own ? `, ${ownUnnamed.length} not named` : ", not named";
   const receipt = keeps
     ? `${who ? `keeps ${who}: ${pictures} picture${s}` : `${pictures} reference picture${s}`}${notNamed} + ${steps} steps`
-      + (!here ? ` (measured with ${measured}, not on this PC)` : steps < measured ? ` (measured with ${measured})` : "")
+      + (!here ? ` (measured on ${measured}-step V1.0; different build selected)` : steps < measured ? ` (measured with ${measured})` : "")
       + (song ? " + song (lip-sync)" : "")
     : `${audios ? "no pictures" : "text only"} · ${steps} steps` + (song ? " · song under the clip" : "");
   const saved = Array.isArray(characters) ? characters.filter((c) => c && c.name) : [];
@@ -523,7 +520,7 @@ function characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, 
     : !song ? "If they sing, choose Song under the clip (lip-sync) and where the sung line starts."
     : null;
   const missing = keeps && !here
-    ? `Keeping a character was measured on the ${measured}-step reference build, which is not on this PC: this runs ${build}.`
+    ? `Keeping a character was measured on the ${measured}-step V1.0 reference build; this selects a different build (${build}).`
     : null;
   const hint = keeps
     ? [lead, missing].filter(Boolean).join(" ") || null
@@ -773,10 +770,9 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
         + `act ("${persona.name} runs…") so the pictures attach to that person.` });
     }
     if (character.keeps && (steps < measured || !character.measuredHere)) {
-      notes.push({ id: "steps-measured", text: `Keeping a character was measured on the ${measured}-step reference build at `
+      notes.push({ id: "steps-measured", text: `Keeping a character was measured on the ${measured}-step V1.0 reference build at `
         + `${measured} steps; this runs ${steps} on ${buildWords(eng, { steps, refs: true })}`
-        + (character.measuredHere ? "." : `. That file (${KEEP_MEASURED.file}, in models/loras) is not on this PC, and `
-          + "the Models screen does not fetch it yet.") });
+        + (character.measuredHere ? "." : ". The selected file differs from the measured V1.0 build.") });
     }
     if (character.keeps && decoder !== KEEP_MEASURED.decoder) {
       notes.push({ id: "decoder", text: `The measured setup used the ${KEEP_MEASURED.decoder} video decoder; this runs `

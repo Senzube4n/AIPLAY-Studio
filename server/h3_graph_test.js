@@ -19,7 +19,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { config } from "./config.js";
+import { config, H3_REF_TURBO8_FILES } from "./config.js";
 import {
   videoGraphH3, videoGraphLtx, h3TurboLoraFor, h3SigmaShiftFor, h3SamplerFor, saveEncode,
 } from "./workflow.js";
@@ -271,8 +271,10 @@ try {
     }
     ok("the table has a row for the fl2v 4-step 768p build, at 6",
       savedH3.turboShiftByLora?.["minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"]?.video === 6);
-    ok("refTurboLora's first candidate is the ref2v 8-step v1.0 768p build",
-      /refTurboLora: loraSlot\("refTurboLora",\n\s+"minimax_h3_ref2v_turbo_8step_v1\.0_768p_comfyui_bf16\.safetensors"/.test(cfg));
+    ok("refTurboLora prefers V1.1 and keeps V1.0 as its first fallback",
+      H3_REF_TURBO8_FILES[0] === "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors"
+      && H3_REF_TURBO8_FILES[1] === "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+      && /refTurboLora: loraSlot\("refTurboLora",\n\s+\.\.\.H3_REF_TURBO8_FILES,/.test(cfg));
     ok("refTurboLora4 still leads with the 4-step v0.1 build",
       /refTurboLora4: loraSlot\("refTurboLora4",\n\s+"minimax_h3_ref2v_turbo_4step_v0\.1_comfyui_bf16\.safetensors"/.test(cfg));
     ok("turboLora3 leads with the TaoMate conversion, then Kijai's rank-19 average, then the 4-step build",

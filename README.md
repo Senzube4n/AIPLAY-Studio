@@ -277,6 +277,9 @@ add explicit checkpoint, eight-step DMD2 and 2048-square HiRes choices without
 changing Standard or a saved image default. HiRes's publisher has not supplied
 an explicit adapter licence; Models records its terms as unknown.
 
+For H3 reference videos, [REF2V Turbo versions](docs/H3_REF_TURBO.md) explains
+the V1.1 preference, V1.0 fallback and the scope of the comparison.
+
 <details>
 <summary><b>Every model, with its size, licence and hardware needs</b></summary>
 
@@ -309,7 +312,7 @@ an explicit adapter licence; Models records its terms as unknown.
 | Stem separation — HTDemucs (fine-tuned) | ~336 MB | MIT · pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Video clips — MiniMax H3 (quantised) | 42.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
 | Video clips — FastH3 (8 steps, experimental) | 42.1 GB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
-| Video references — MiniMax H3 ref2va | 22.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
+| Video references — MiniMax H3 ref2va | 24.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
 | Background removal — BiRefNet | 444 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Images — Ideogram 4 (open 9B) | 25.2 GB | Ideogram Non-Commercial Model Agreement · ⚠ terms unread | 12 GB (16 rec) | 32 GB (32 rec) |
 | Narration — TTS voices (Kokoro + Qwen3-TTS) | ~15.5 GB | Apache-2.0 (both engines) · pip | none (8 rec) | 16 GB (32 rec) |

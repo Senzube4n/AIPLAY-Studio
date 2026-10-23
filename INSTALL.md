@@ -99,7 +99,7 @@ Other platforms are covered at the end, honestly.
 |---|---|
 | **A graphics card for the music model Studio picks, or none.** YuE2 3B through ComfyUI (the build Studio recommends): an NVIDIA or AMD card, 8 GB of VRAM minimum, 12 GB recommended. The native YuE2 GGUF: any card (CUDA on NVIDIA, Vulkan on AMD and Intel) or the CPU, which is slow; Studio picks it with no card, on an Intel card, or on a PC under the ComfyUI build's card or RAM minimum. MiniMax Music 3, if you pick it: an NVIDIA or AMD card, 6 GB minimum, 12 GB recommended. | The ComfyUI music models' first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback for them — MiniMax stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run them. The AMD path is measured on one card — see [NVIDIA, AMD, Intel or CPU](README.md#nvidia-amd-intel-or-cpu). |
 | **16 GB of system RAM**, 32 GB recommended. | On smaller cards the model is streamed out of system RAM, so RAM does the work VRAM cannot. |
-| **Free disk space.** About 4 GB for music alone (YuE2 3B through ComfyUI, the build Studio recommends; MiniMax Music 3, if you pick it instead, is about 12 GB). About 66 GB more for music videos (MiniMax H3 and its reference build), and about 423 GB if you downloaded every model in the catalogue (a file two features share counted once). | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
+| **Free disk space.** About 4 GB for music alone (YuE2 3B through ComfyUI, the build Studio recommends; MiniMax Music 3, if you pick it instead, is about 12 GB). About 68 GB more for music videos (MiniMax H3 and its reference build), and about 425 GB if you downloaded every model in the catalogue (a file two features share counted once). | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
 | **Node.js 20 or newer.** | Studio's server is written in it. |
 | **A ComfyUI install.** | Studio drives one. It does not contain one. |
 
@@ -445,7 +445,7 @@ you want and when.
 | Stem separation — HTDemucs (fine-tuned) | ~336 MB | MIT · pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Video clips — MiniMax H3 (quantised) | 42.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
 | Video clips — FastH3 (8 steps, experimental) | 42.1 GB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
-| Video references — MiniMax H3 ref2va | 22.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
+| Video references — MiniMax H3 ref2va | 24.9 GB | MiniMax H3 Community · ⚠ territory | 8 GB (12 rec) | 16 GB (32 rec) |
 | Background removal — BiRefNet | 444 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Images — Ideogram 4 (open 9B) | 25.2 GB | Ideogram Non-Commercial Model Agreement · ⚠ terms unread | 12 GB (16 rec) | 32 GB (32 rec) |
 | Narration — TTS voices (Kokoro + Qwen3-TTS) | ~15.5 GB | Apache-2.0 (both engines) · pip | none (8 rec) | 16 GB (32 rec) |

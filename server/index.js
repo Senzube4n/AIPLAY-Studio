@@ -185,7 +185,8 @@ async function checkedVideoLoras(value, engine) {
   const e = videoEngine(engine);
   return validateVideoLoras(value, {
     engine, loraBase: e.loraBase, label: e.label, shelf: async () => scanBases(await modelBases()), probe: probeModel,
-    automatic: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4].filter(Boolean),
+    automatic: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
+      .concat(e.automaticLoras ?? []).filter(Boolean),
   });
 }
 /* Qwen too, now: its files missing is the same "not installed" as any other
@@ -4067,7 +4068,7 @@ const server = http.createServer(async (req, res) => {
                * LoRA picker leaves them out, because stacking one again would
                * apply it twice. */
               ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
-                .filter(Boolean).map((n) => requireModelName(n)),
+                .concat(e.automaticLoras ?? []).filter(Boolean).map((n) => requireModelName(n)),
               /* The base a LoRA must have been made for (config.js), which the
                * Video screen's picker judges against and /api/video checks: null
                * means this engine takes none, and the picker hides. */

@@ -262,9 +262,9 @@ console.log("\n§1  the simple way on the Video screen");
   ok("the 4-step speed-up alone: the reference path's 8-step band is NOT counted, so Keep my character at 8 is refused, offering the 8-step file",
     same(fourOnly.refBuilds, { four: true, eight: false }) && fourOnly.keep8?.row === "videoH3Turbo8" && fourOnly.keep4 === null,
     JSON.stringify(fourOnly));
-  ok("H3 + Video references: the ref2v 4-step is not an 8-step build, Keep runs its own 4, and 8 is refused without offering a row that changes nothing",
+  ok("H3 + older Video references: Keep runs its own 4, and 8 offers the Video references update",
     same(h3Refs.refBuilds, { four: true, eight: false }) && h3Refs.refSteps === 4 && h3Refs.loadedRef === 4 && h3Refs.keep4 === null
-    && h3Refs.keep8?.row === null && /needs the 8-step reference build, which is not on this PC/.test(h3Refs.keep8?.error || "")
+    && h3Refs.keep8?.row === "videoRefs" && /needs the 8-step reference build, which is not on this PC/.test(h3Refs.keep8?.error || "")
     && h3Refs.steps === 8, JSON.stringify(h3Refs));
   ok("...where both reference builds are on disk, both bands count", same(rig.refBuilds, { four: true, eight: true }) && rig.keep8 === null, JSON.stringify(rig.refBuilds));
   ok("...and the screen's chips read those numbers as they are",

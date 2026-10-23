@@ -151,6 +151,13 @@ const videoPick = (engine, field, sub, ...names) => { VIDEO_PICKS.push([engine, 
 const H3_LORA_SLOTS = {};
 const loraSlot = (slot, ...names) => { H3_LORA_SLOTS[slot] = names; return pick("loras", ...names); };
 
+/* Known automatic reference distillations, including the fallback. Neither
+ * belongs in a custom stack beside the one the engine loads itself. */
+export const H3_REF_TURBO8_FILES = Object.freeze([
+  "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors",
+  "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+]);
+
 /* The TaoMate 3-step files, in pick order (the full conversion, then Kijai's
  * 182 MB rank-19 average). OPTIONAL: nothing asks for them at start. They are
  * read at import like every other file, again when a download finishes
@@ -1485,20 +1492,18 @@ export const config = {
     turboLora: loraSlot("turboLora",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
-    /* The ref2va checkpoint has its own turbo distillations — TWO now. The
-     * 8-step v1.0 768p build (lightx2v, 1.96 GB, fetched 2026-09-12) is the one
-     * the community calls "much better at keeping references", and the point
-     * that matters here is plainer: it MATCHES the 8-step schedule the
-     * reference path runs by default. Until this date the 4-step v0.1 was the
-     * only ref2v turbo on disk, so every 8-step reference render ran a 4-step
-     * distillation off its design point — the exact mistake the turboLora4
-     * comment below describes for the fl2v path, made on the other one. Falls
-     * back to v0.1, then to the fl2v loras, for machines without it. */
+    /* V1.1 is the preferred 8-step reference build, by the creator's choice
+     * after the 2026-10-23 Singularity V2 movement pair. That single pair ran
+     * 5.276% faster but changed more of the reference scene; it is not a
+     * general quality or speed ranking (docs/H3_REF_TURBO.md). V1.0 remains
+     * the first fallback, then ref2v 4-step and the older fl2v fallbacks. The
+     * separate 4-step slot below still owns 4-step reference renders. */
     refTurboLora: loraSlot("refTurboLora",
-      "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      ...H3_REF_TURBO8_FILES,
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
+    automaticLoras: H3_REF_TURBO8_FILES,
     /* THE 4-STEP BUILDS, NAMED SEPARATELY so the LoRA can match the schedule.
      *
      * The comment above admits it: "We ran the 4-STEP 768p build at 8 steps,
@@ -1568,6 +1573,8 @@ export const config = {
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { video: 12, audio: 3 },
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": { video: 12, audio: 3 },
       "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": { video: 12, audio: 3 },
+      // The controlled V1.1 comparison used 12/3; upstream's newer 6 is FL2V advice.
+      "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors": { video: 12, audio: 3 },
     },
 
     /* Strength of the turbo LoRA. 1.0 is the published default for this build;
@@ -2183,12 +2190,12 @@ live = config;
 /* H3'S DEFAULT STEP COUNT, AND THE THREE QUALITY CHIPS, FOLLOW THE DISK.
  *
  * An 8-step default is right only where the 8-step turbo files are on disk.
- * The Models screen fetches the fl2v 4-step 768p (its "video" row) and the
- * ref2v 4-step v0.1 ("videoRefs") and no 8-step file, so on a machine set up
- * from that screen `turboLora` and `refTurboLora` fall back to 4-step files.
- * A literal 8 there ran a 4-step distillation at 8 steps on every render that
+ * Earlier Models rows fetched only the 4-step files. A literal 8 there ran a
+ * 4-step distillation at 8 steps on every render that
  * named no step count, the move the turboLora4 comment calls "a different one
- * used wrongly". So each number is what this disk can run matched:
+ * used wrongly". The current reference row includes V1.1 at 8 and v0.1 at 4,
+ * but existing installations may have either, so each number still follows
+ * the file this disk can run matched:
  *
  *   standard  8 where pick() resolved turboLora to an 8-step file (on AMD,
  *             Intel and the CPU, refTurboLora too), else 4, the matched 4-step

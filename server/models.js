@@ -1869,10 +1869,17 @@ export const CATALOG = [
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors`,
         dest: M("diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"), bytes: 20970379616 },
+      /* No V1.0 alt: an existing V1.0 still renders as the config fallback,
+       * while this row must offer the actual V1.1 update rather than call it
+       * installed because another version exists. */
+      { url: `${HF}/lightx2v/Minimax-h3-Turbo/resolve/30f485ed874aa44c8183348ad361c5eabad318da/minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors`,
+        dest: M("loras/minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors"),
+        bytes: 1_956_193_000,
+        sha256: "e56863a7524e0300729cbb7b64cc8b548d90698c1abbf7d83898b0122fbe1e81" },
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`,
         dest: M("loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"), bytes: 1956193000 },
     ],
-    note: "23 GB, optional. Shares the text encoder and VAEs with the video capability, so install that first.",
+    note: "24.9 GB, optional: ref2va checkpoint plus REF2V 8-step V1.1 and 4-step v0.1. Shares the text encoder and VAEs with the video capability, so install that first. V1.1 is preferred at 8 steps; an existing V1.0 is retained as fallback.",
     /* H3's tiers. Measured under an 8 GB cap: the 8-step reference path with
      * one picture fit at 960x544, 5 s, with only 314 MiB to spare (lab L8r);
      * several pictures and the song under the clip were never capped, and it
