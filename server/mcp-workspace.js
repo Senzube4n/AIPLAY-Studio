@@ -1,6 +1,7 @@
 /** Workflow parity tools. Each calls the same route as its Studio panel. */
 import { open, readFile } from "node:fs/promises";
 import path from "node:path";
+import { MOSS_PRESET_NAMES } from "./moss-presets.js";
 
 export function studioApiPath(value) {
   if (typeof value !== "string" || !value.startsWith("/api/") || /[\\#\u0000-\u0020]/.test(value)) throw new Error("Use a local /api/ path, without a URL, fragment, spaces or backslashes.");
@@ -90,7 +91,7 @@ export function workspaceTools(api, safeName) {
     {
       name: "moss_image_status",
       description: "Read optional MOSS-Image native weights and runtime support. Text-to-image only; no download, engine switch or generation. Use make_image with engine moss-image after ready.",
-      inputSchema: { type: "object", properties: { dit: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" }, moss_preset: { type: "string", enum: ["standard", "spectrum-manual-h1", "spectrum-adaptive-h2", "turbo-4", "dmd-8"] } }, additionalProperties: false },
+      inputSchema: { type: "object", properties: { dit: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" }, moss_preset: { type: "string", enum: MOSS_PRESET_NAMES } }, additionalProperties: false },
       async run(a = {}) {
         const q = new URLSearchParams();
         for (const [key, value] of Object.entries({ dit: a.dit, encoder: a.encoder, vae: a.vae, mossPreset: a.moss_preset })) if (value !== undefined) q.set(key, String(value));

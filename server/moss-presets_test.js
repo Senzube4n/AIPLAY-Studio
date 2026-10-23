@@ -197,8 +197,8 @@ function deps(name, extra={}) {
   info.CLIPLoader={input:{required:{type:[["moss_image"]]}}};
   info.KSampler={input:{required:{sampler_name:[["er_sde","euler"]],scheduler:[["simple"]]}}};
   info.LoraLoaderModelOnly={input:{required:{model:["MODEL"],lora_name:[[...(recipe.adapter?[recipe.adapter.filename]:[])]],strength_model:["FLOAT",{min:-100,max:100}]}}};
-  return { options:{mossPreset:name},config:{},bases:async()=>[],scan:async()=>[...shelf,...(recipe.adapter?[{name:recipe.adapter.filename,folder:"loras",bytes:recipe.adapter.bytes}]:[])],
-    spectrumPin:async()=>({ready:true,commit:MOSS_SPECTRUM.commit}),adapterPin:async(_found,pin)=>({ready:true,sha256:pin.sha256}),engine:{objectInfo:async()=>info},...extra };
+  return { options:{mossPreset:name},config:{},bases:async()=>[],scan:async()=>[...shelf,...(recipe.base?[{name:recipe.base.filename,folder:"diffusion_models",bytes:recipe.base.bytes}]:[]),...(recipe.adapter?[{name:recipe.adapter.filename,folder:"loras",bytes:recipe.adapter.bytes}]:[])],
+    spectrumPin:async()=>({ready:true,commit:MOSS_SPECTRUM.commit}),modelPin:async(_found,pin)=>({ready:true,sha256:pin.sha256}),adapterPin:async(_found,pin)=>({ready:true,sha256:pin.sha256}),engine:{objectInfo:async()=>info},...extra };
 }
 
 test("accepted Standard graph is byte-equivalent and all explicit policies wire MODEL before sampling",()=>{
@@ -211,6 +211,10 @@ test("accepted Standard graph is byte-equivalent and all explicit policies wire 
     assert.equal(g[8].inputs.sampler_name,r.sampler); assert.equal(g[8].inputs.scheduler,"simple");
     assert.equal(settings.shift,5); assert.equal(settings.promptUpsampler,false); assert.equal(settings.skipLayerGuidance,false);
     if(name==="standard") { assert.equal(g[6],undefined); continue; }
+    if(name==="kromoss-standard") {
+      assert.equal(g[6],undefined); assert.deepEqual(g[8].inputs.model,["1",0]);
+      assert.equal(settings.baseModel.sha256,r.base.sha256); assert.equal(settings.mossRecipe,mossRecipeIdentity(name)); continue;
+    }
     assert.equal(g[6].class_type,r.node); assert.deepEqual(g[8].inputs.model,["6",0]); assert.deepEqual(g[6].inputs.model,["1",0]);
     assert.equal(settings.mossPreset,name); assert.equal(settings.mossRecipe,mossRecipeIdentity(name));
     if(r.policy) {
@@ -230,8 +234,8 @@ test("accepted Standard graph is byte-equivalent and all explicit policies wire 
 test("unknown recipes, mismatched fixed dials and unsupported fast dimensions are refused",()=>{
   for(const mossPreset of ["constructor","toString","unknown",{},3]) assert.throws(()=>mossImageOptions({prompt:"x",mossPreset}));
   for(const mossPreset of MOSS_PRESET_NAMES.slice(1)) {
-    assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,steps:50}));
-    assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,cfg:4}));
+    assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,steps:MOSS_PRESETS[mossPreset].steps+1}));
+    assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,cfg:MOSS_PRESETS[mossPreset].cfg+1}));
     assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,loras:[{name:"other.safetensors"}]}));
     assert.throws(()=>mossImageOptions({prompt:"x",mossPreset,refImages:["x.png"]}));
   }
@@ -277,8 +281,8 @@ test("Spectrum verifies actual small source hashes, not only a forgeable marker"
 test("duplicate/cache identity separates policy and adapter SHA while Standard stays compatible",()=>{
   const job={engine:"moss-image",prompt:"x",seed:9,steps:25,cfg:2.5};
   assert.equal(jobIdentity(job),jobIdentity({...job,mossPreset:"standard"}));
-  assert.equal(new Set(MOSS_PRESET_NAMES.map(mossPreset=>jobIdentity({...job,mossPreset}))).size,5);
-  assert.equal(new Set(MOSS_PRESET_NAMES.map(mossRecipeIdentity)).size,5);
+  assert.equal(new Set(MOSS_PRESET_NAMES.map(mossPreset=>jobIdentity({...job,mossPreset}))).size,MOSS_PRESET_NAMES.length);
+  assert.equal(new Set(MOSS_PRESET_NAMES.map(mossRecipeIdentity)).size,MOSS_PRESET_NAMES.length);
   assert.equal(Object.isFrozen(MOSS_PRESETS["spectrum-manual-h1"].policy),true);
 });
 

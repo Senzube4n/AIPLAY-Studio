@@ -32,7 +32,7 @@ const side = (value, name) => {
 const model = (value, fallback, name) => {
   const file = requireModelName(value || fallback);
   if (!/\.safetensors$/i.test(file)) throw new TypeError(name + " needs a native safetensors file; MOSS GGUF has not been validated.");
-  if (modelLeaf(file) !== fallback) throw new TypeError(name + " must use the verified MOSS-Image SFT bundle (" + fallback + "); other files have not been validated.");
+  if (modelLeaf(file) !== fallback) throw new TypeError(name + " must use the " + (fallback.startsWith("kromoss_") ? "verified Kromoss bundle" : "verified MOSS-Image SFT bundle") + " (" + fallback + "); other files have not been validated.");
   return file;
 };
 
@@ -52,20 +52,22 @@ export function mossImageOptions(options = {}) {
   if (sampler !== recipe.sampler || scheduler !== recipe.scheduler) throw new Error("The MOSS-Image " + name + " preset uses " + recipe.sampler + " / " + recipe.scheduler + ".");
   const cfg = number(o.cfg, recipe.cfg, 1, 10, "cfg");
   const steps = number(o.steps, recipe.steps, 1, MOSS_IMAGE_PRESET.maxSteps, "steps", true);
+  const width = side(o.width ?? recipe.size, "width"), height = side(o.height ?? recipe.size, "height");
   if (name !== "standard" && (cfg !== recipe.cfg || steps !== recipe.steps)) throw new Error("The MOSS-Image " + name + " preset requires " + recipe.steps + " steps and CFG " + recipe.cfg + ".");
-  if (recipe.adapter && (side(o.width, "width") * side(o.height, "height") > 1024 * 1024 || Math.max(o.width || 1024, o.height || 1024) > 1536)) throw new Error("Experimental 4/8-step MOSS presets support at most 1024 squared pixels and a 1536-pixel side. Choose Standard for larger pictures.");
+  if (recipe.exactSize && (width !== recipe.exactSize || height !== recipe.exactSize)) throw new Error("The MOSS-Image " + name + " preset requires exactly " + recipe.exactSize + "x" + recipe.exactSize + ".");
+  if (recipe.adapter && (width * height > (recipe.maxPixels || 1024 * 1024) || Math.max(width, height) > (recipe.maxSide || 1536))) throw new Error("Experimental 4/8-step MOSS presets support at most 1024 squared pixels and a 1536-pixel side. Choose Standard for larger pictures.");
   const negative = o.negative ?? "";
   if (typeof negative !== "string" || negative.length > 2000) throw new TypeError("negative must be a string of at most 2000 characters.");
   if (negative.trim() && cfg === 1) throw new Error("A MOSS-Image negative prompt needs CFG above 1.");
   for (const flag of ["transparent", "draft"]) if (o[flag] !== undefined && typeof o[flag] !== "boolean") throw new TypeError(flag + " must be true or false.");
   return {
     prompt: o.prompt, negative,
-    width: side(o.width, "width"), height: side(o.height, "height"),
+    width, height,
     steps, mossPreset: name,
-    cfg, count: number(o.count, 1, 1, MOSS_IMAGE_PRESET.maxCount, "count", true),
+    cfg, count: number(o.count, 1, 1, recipe.maxCount || MOSS_IMAGE_PRESET.maxCount, "count", true),
     seed: number(o.seed, 0, 0, Number.MAX_SAFE_INTEGER, "seed", true),
     sampler, scheduler,
-    dit: model(o.dit, MOSS_IMAGE_FILES.dit, "Diffusion model"),
+    dit: model(o.dit, recipe.base?.filename || MOSS_IMAGE_FILES.dit, "Diffusion model"),
     encoder: model(o.encoder, MOSS_IMAGE_FILES.encoder, "Text encoder"),
     vae: model(o.vae, MOSS_IMAGE_FILES.vae, "VAE"),
     prefix: typeof o.prefix === "string" && o.prefix ? o.prefix : "aiplay_image",
@@ -101,15 +103,18 @@ export function mossImageSettings(graph) {
   const n = graph[8].inputs;
   const settings = { steps: n.steps, cfg: n.cfg, sampler: n.sampler_name, scheduler: n.scheduler,
     shift: 5, shiftSource: "native-model-default", promptUpsampler: false, skipLayerGuidance: false };
-  if (!graph[6]) return settings; // Keep the accepted standard graph/metadata byte-equivalent.
-  const entry = Object.entries(MOSS_PRESETS).find(([, r]) => r.node === graph[6].class_type
-    && (!r.adapter || r.adapter.filename === graph[6].inputs.lora_name));
+  if (!graph[6] && graph[1].inputs.unet_name.split(/[\\/]/).at(-1) === MOSS_IMAGE_FILES.dit) return settings; // Keep accepted Standard byte-equivalent.
+  const entry = Object.entries(MOSS_PRESETS).find(([, r]) =>
+    (r.base?.filename || MOSS_IMAGE_FILES.dit) === graph[1].inputs.unet_name.split(/[\\/]/).at(-1)
+    && (r.node ? r.node === graph[6]?.class_type && (!r.adapter || r.adapter.filename === graph[6].inputs.lora_name) : !graph[6]));
   if (!entry) throw new Error("Unknown MOSS recipe graph.");
-  const [name, recipe] = entry, { model: ignoredModel, ...policy } = graph[6].inputs;
+  const [name, recipe] = entry, { model: ignoredModel, ...policy } = graph[6]?.inputs || {};
   // Record actual graph inputs as well as pinned expected artifact identity.
   return { ...settings, mossPreset: name, mossRecipe: mossRecipeIdentity(name), baseWeightFormat: "int8-convrot",
+    ...(recipe.base ? { baseModel: { ...recipe.base } } : {}),
+    ...(recipe.vaeDecode ? { vaeDecode: recipe.vaeDecode } : {}),
     ...(recipe.policy ? { spectrum: { repository: MOSS_SPECTRUM.repository, commit: MOSS_SPECTRUM.commit,
       version: MOSS_SPECTRUM.version, node: recipe.node, policy, ...(recipe.erSdeInternal ? { erSdeInternal: recipe.erSdeInternal } : {}) } }
-      : { adapter: { ...recipe.adapter, strength: policy.strength_model },
-        loraPrecision: "experimental-int8-native-lora-requantization", publisherBf16Equivalent: false }) };
+      : recipe.adapter ? { adapter: { ...recipe.adapter, strength: policy.strength_model },
+        loraPrecision: "experimental-int8-native-lora-requantization", publisherBf16Equivalent: false } : {}) };
 }

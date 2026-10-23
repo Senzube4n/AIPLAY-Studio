@@ -1580,7 +1580,8 @@ node --test server/moss-image_test.js server/moss-status_test.js server/moss-api
 node --check server/moss-presets.js || exit 1
 node --check server/moss-spectrum.js || exit 1
 node --check server/moss-adapter.js || exit 1
-node --test server/moss-presets_test.js || exit 1
+node --check server/moss-provenance.js || exit 1
+node --test server/moss-presets_test.js server/moss-candidates_test.js server/moss-ui-presets_test.js server/moss-provenance_test.js server/engine/moss-record_test.js || exit 1
 # Reproducible optional Spectrum source setup, including exclusive-write and pin fixtures.
 node --check scripts/setup-moss-spectrum.mjs || exit 1
 node --test scripts/setup-moss-spectrum_test.mjs || exit 1

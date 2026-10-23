@@ -18045,7 +18045,11 @@ const IMG_MOSS_PRESETS = {
   "spectrum-adaptive-h2": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
   "turbo-4": { steps: 4, cfg: 1, sampler: "euler", scheduler: "simple" },
   "dmd-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" },
+  "kromoss-standard": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
+  "kromoss-dmd2-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" },
+  "moss-hires-v03": { steps: 25, cfg: 4, sampler: "er_sde", scheduler: "simple", size: 2048 },
 };
+var imgMossPriorSize = null;
 let imgMossKey = "", imgMossRequest = 0, imgMossReady = false;
 function imgMossRecipe() {
   return IMG_MOSS_PRESETS[$("imgMossPreset")?.value || "standard"] || IMG_MOSS_PRESETS.standard;
@@ -18081,6 +18085,21 @@ async function imgMossCheck(force = false) {
 }
 function imgMossShape(reset = false) {
   const moss = imgEffectiveEngine() === "moss-image", recipe = imgMossRecipe();
+  const hires = moss && recipe.size === 2048;
+  // This tested high-resolution recipe makes one 2048-square image. Keep the
+  // previous form values so switching recipes never loses the person's size.
+  if (hires) {
+    if (!imgMossPriorSize) imgMossPriorSize = { size: $("imgSize").value, width: $("imgW").value, height: $("imgH").value, count: $("imgCount").value };
+    $("imgSize").value = "custom"; $("imgW").value = $("imgH").value = "2048"; $("imgCount").value = "1";
+    $("imgCustomL").hidden = $("imgCustomW").hidden = false;
+    for (const id of ["imgSize", "imgW", "imgH", "imgCount"]) $(id).disabled = true;
+  } else if (imgMossPriorSize) {
+    $("imgSize").value = imgMossPriorSize.size; $("imgW").value = imgMossPriorSize.width;
+    $("imgH").value = imgMossPriorSize.height; $("imgCount").value = imgMossPriorSize.count;
+    imgMossPriorSize = null;
+    $("imgCustomL").hidden = $("imgCustomW").hidden = $("imgSize").value !== "custom";
+    for (const id of ["imgSize", "imgW", "imgH", "imgCount"]) $(id).disabled = false;
+  }
   $("imgMossLabel").hidden = $("imgMossRow").hidden = !moss;
   const fixed = moss && ($("imgMossPreset").value || "standard") !== "standard";
   $("imgSteps").disabled = $("imgCfg").disabled = fixed;
@@ -18093,7 +18112,15 @@ function imgMossShape(reset = false) {
     imgMossCheck();
   } else if (imgMossKey) { imgMossKey = ""; imgMossRequest++; imgMossReady = false; }
 }
-$("imgMossPreset").onchange = () => { imgMossShape(true); imgSampling(); imgQwenShape(); };
+$("imgMossPreset").onchange = () => {
+  // A named recipe owns its checkpoint. Leave the custom-file route when the
+  // person picks one, so a previously selected SFT file cannot shadow Kromoss.
+  if ($("imgEngine").value === "checkpoint" && imgEffectiveEngine() === "moss-image") {
+    $("imgEngine").value = "moss-image";
+    $("imgEngine").onchange?.();
+  }
+  imgMossShape(true); imgSampling(); imgQwenShape();
+};
 $("imgMossCheck").onclick = () => imgMossCheck(true);
 
 let imgQwenStatus = null, imgQwenChecking = false, imgQwenRequest = 0, imgMakePending = false;

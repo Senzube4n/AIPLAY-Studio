@@ -60,14 +60,16 @@ test("old runtime and unsupported MOSS requests never enqueue anything", async (
 });
 
 test("all explicit acceleration recipes survive validation, queueing and the API receipt", async () => {
-  for (const [mossPreset, steps, cfg, sampler] of [["standard",25,2.5,"er_sde"],["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"]]) {
+  for (const [mossPreset, steps, cfg, sampler] of [["standard",25,2.5,"er_sde"],["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"],["kromoss-standard",25,2.5,"er_sde"],["kromoss-dmd2-8",8,1,"euler"],["moss-hires-v03",25,4,"er_sde"]]) {
     const r = await request({ prompt: "A lighthouse", mossPreset });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.queued[0].video.mossPreset, mossPreset); assert.equal(r.checked[0].mossPreset, mossPreset);
     assert.equal(r.queued[0].video.steps, steps); assert.equal(r.queued[0].video.cfg, cfg); assert.equal(r.queued[0].video.sampler, sampler);
     assert.equal(r.body.mossPreset, mossPreset); assert.equal(r.body.mossRecipe, "fixture-recipe");
+    if (mossPreset.startsWith("kromoss")) assert.equal(r.queued[0].video.dit,"kromoss_int8_convrot.safetensors");
+    if (mossPreset==="moss-hires-v03") { assert.equal(r.queued[0].video.width,2048); assert.equal(r.queued[0].video.height,2048); assert.equal(r.queued[0].video.count,1); }
   }
-  for (const extra of [{mossPreset:"unknown"},{mossPreset:"turbo-4",steps:25},{mossPreset:"dmd-8",cfg:2.5},{mossPreset:"turbo-4",width:1536,height:1024},{mossPreset:"turbo-4",negative:"blur"},{engine:"flux2",mossPreset:"standard"}]) {
+  for (const extra of [{mossPreset:"unknown"},{mossPreset:"turbo-4",steps:25},{mossPreset:"dmd-8",cfg:2.5},{mossPreset:"turbo-4",width:1536,height:1024},{mossPreset:"turbo-4",negative:"blur"},{engine:"flux2",mossPreset:"standard"},{mossPreset:"kromoss-standard",dit:"moss_image_sft_int8_convrot.safetensors"},{mossPreset:"moss-hires-v03",width:1024},{mossPreset:"moss-hires-v03",count:2}]) {
     const r = await request({prompt:"A lighthouse",...extra}); assert.equal(r.status,400); assert.equal(r.queued.length,0);
   }
   const notReady = await request({prompt:"A lighthouse",mossPreset:"spectrum-manual-h1"},false);

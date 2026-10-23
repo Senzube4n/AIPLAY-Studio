@@ -6,6 +6,7 @@ av
 soundfile
 Pillow
 opencv-python-headless
+fonttools
 
 # CPU bridge/adapter harnesses save and reload safetensors once torch is present.
 safetensors==0.8.0

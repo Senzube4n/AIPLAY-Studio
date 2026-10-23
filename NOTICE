@@ -295,6 +295,12 @@ in the app.
                             Copyright License))
                             https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT/blob/main/LICENSE
 
+    Kromoss INT8 (experimental)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/lodestones/Kromoss/blob/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/LICENSE
+
     MOSS-Image Turbo 4 (experimental)
                             Apache-2.0
                             Output rights: yours (Apache-2.0 §2 (Grant of
@@ -308,6 +314,19 @@ in the app.
                             Copyright License); adapter model card declares
                             Apache-2.0)
                             https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd/blob/f95df83b5e90ae91ea412434b3f9b7f1c8c6314f/README.md
+
+    Kromoss DMD2 8 (experimental)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License); adapter model card declares
+                            Apache-2.0)
+                            https://huggingface.co/lodestones/Kromoss/blob/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/README.md
+
+    MOSS HiRes v0.3 (experimental)
+                            Not supplied by publisher
+                            Output rights: UNVERIFIED — the licence text has not
+                            been read
+                            https://huggingface.co/comfyanonymous/MOSS_image_MAX_ULTRA_hires_lora_test/tree/9af7b1f3d135ce132cc6c4b8147030efff19507f
 
     Qwen Image 2.1 (research licence)
                             Qwen Research License Agreement

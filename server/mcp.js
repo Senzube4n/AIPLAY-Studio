@@ -67,6 +67,7 @@ import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
 import { requireModelName } from "./localmodels.js";
+import { MOSS_PRESET_NAMES } from "./moss-presets.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 import { WHISPER_MODELS } from "./config.js";
 
@@ -2394,7 +2395,7 @@ export const TOOLS = [
               steps: { type: "integer" }, cfg: { type: "number" },
               count: { type: "integer" }, seconds: { type: "number" },
               dit: { type: "string" }, ditEngine: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" },
-              mossPreset: { type: "string", enum: ["standard", "spectrum-manual-h1", "spectrum-adaptive-h2", "turbo-4", "dmd-8"] },
+              mossPreset: { type: "string", enum: MOSS_PRESET_NAMES },
               quality: { type: "string", enum: ["default", "quality", "turbo"] }, persona: { type: "string" },
               refImages: { type: "array", maxItems: 10, items: { type: "string" }, description: "Ordered image filenames, plus any saved persona references (10 combined maximum)." },
               refSizing: { type: "string", enum: ["reference", "custom"] },
@@ -2804,7 +2805,7 @@ export const TOOLS = [
             + "composition. ideogram4: the open Ideogram release — typography/posters; NON-COMMERCIAL licence "
             + "whose text is gated and unread; preset via quality. checkpoint: any .safetensors in "
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
-        moss_preset: { type: "string", enum: ["standard", "spectrum-manual-h1", "spectrum-adaptive-h2", "turbo-4", "dmd-8"], description: "MOSS only. Standard keeps the native 25-step defaults; experimental Spectrum presets fix 25/CFG2.5/er_sde/simple and require the pinned standalone node. Turbo4 and DMD8 fix 4 or 8 steps/CFG1/euler/simple with a pinned model-only LoRA. Existing INT8 base uses native requantization, not publisher-validated BF16 equivalence. Check moss_image_status with the same preset. No custom stacks." },
+        moss_preset: { type: "string", enum: MOSS_PRESET_NAMES, description: "MOSS only. Standard keeps the native 25-step defaults; Spectrum fixes 25/CFG2.5/er_sde/simple and requires the pinned standalone node. Turbo4 and DMD8 fix 4 or 8 steps/CFG1/euler/simple. Kromoss Standard uses its pinned INT8 checkpoint at 25 steps/CFG 2.5/er_sde/simple; Kromoss DMD2 fixes 8 steps/CFG 1/euler/simple with its own adapter. MOSS HiRes v0.3 fixes 25 steps/CFG 4/er_sde/simple, exactly 2048x2048 and one image with native VAE decode; its publisher supplied no explicit adapter licence. INT8 adapters use native requantization, not publisher BF16-equivalent precision. Check moss_image_status with the same preset. No custom stacks." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename, from models/checkpoints OR models/diffusion_models (list_checkpoints shows both shelves and says which loader each needs). A bare transformer — Z-Image, Anima, FLUX.2, Krea 2 — renders on its own family's recipe with this file in place of the catalogue's." },
         dit_engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "zimage", "anima", "flux2", "krea2", "checkpoint"],

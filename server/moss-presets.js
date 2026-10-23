@@ -81,6 +81,27 @@ export const MOSS_ADAPTERS = freeze([
     "filename": "moss_image_sft_8step_dmd_strength1.safetensors"
   }
 ]);
+export const MOSS_KROMOSS_MODEL = freeze({
+  repo: "lodestones/Kromoss", revision: "7f9bb7b06d7b6c27d294b0bab5a2b3056c379279",
+  filename: "kromoss_int8_convrot.safetensors", bytes: 5413698958,
+  sha256: "cacff0dd25cd2cf531e1f5ddae7872c3d57a54dbf66f1a1279f2f118514e7905",
+  url: "https://huggingface.co/lodestones/Kromoss/resolve/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/diffusion_models/kromoss_int8_convrot.safetensors",
+  catalogueId: "moss-image-kromoss",
+});
+export const MOSS_DMD2_ADAPTER = freeze({
+  repo: "lodestones/Kromoss", revision: "7f9bb7b06d7b6c27d294b0bab5a2b3056c379279",
+  filename: "kromoss_dmd2_8step.safetensors", upstreamFilename: "8-steps-dmd2-lora.safetensors",
+  bytes: 1189176800, sha256: "7683fe1fb51f73f5d690f24dd6b7f46f31ab9a9873729a854ac5c9a420ffe6f2",
+  url: "https://huggingface.co/lodestones/Kromoss/resolve/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/8-steps-dmd2-lora.safetensors",
+  strength: 1, catalogueId: "moss-image-kromoss-dmd2-8",
+});
+export const MOSS_HIRES_ADAPTER = freeze({
+  repo: "comfyanonymous/MOSS_image_MAX_ULTRA_hires_lora_test", revision: "9af7b1f3d135ce132cc6c4b8147030efff19507f",
+  filename: "moss_hires_lora_test_v0.3.safetensors", bytes: 182195248,
+  sha256: "98e8abcc25016d17a4ca41dec4063abe2ff2b0a12da42e0483c522ce36f8430b",
+  url: "https://huggingface.co/comfyanonymous/MOSS_image_MAX_ULTRA_hires_lora_test/resolve/9af7b1f3d135ce132cc6c4b8147030efff19507f/moss_hires_lora_test_v0.3.safetensors",
+  strength: 1, catalogueId: "moss-image-hires-v03",
+});
 export const MOSS_PRESETS = freeze({
   standard: { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
   "spectrum-manual-h1": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple", node: "SpectrumMOSSImageManual", policy: {
@@ -122,6 +143,11 @@ export const MOSS_PRESETS = freeze({
 } },
   "turbo-4": { steps: 4, cfg: 1, sampler: "euler", scheduler: "simple", node: "LoraLoaderModelOnly", adapter: MOSS_ADAPTERS[0] },
   "dmd-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple", node: "LoraLoaderModelOnly", adapter: MOSS_ADAPTERS[1] },
+  "kromoss-standard": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple", base: MOSS_KROMOSS_MODEL },
+  "kromoss-dmd2-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple", base: MOSS_KROMOSS_MODEL,
+    node: "LoraLoaderModelOnly", adapter: MOSS_DMD2_ADAPTER },
+  "moss-hires-v03": { steps: 25, cfg: 4, sampler: "er_sde", scheduler: "simple", node: "LoraLoaderModelOnly",
+    adapter: MOSS_HIRES_ADAPTER, size: 2048, exactSize: 2048, maxPixels: 2048 * 2048, maxSide: 2048, maxCount: 1, vaeDecode: "native" },
 });
 export const MOSS_PRESET_NAMES = Object.freeze(Object.keys(MOSS_PRESETS));
 export function mossPreset(name = "standard") {
@@ -131,6 +157,6 @@ export function mossPreset(name = "standard") {
 /** Includes the pinned implementation and adapter, not just a display label. */
 export function mossRecipeIdentity(name = "standard") {
   const recipe = mossPreset(name);
-  return createHash("sha256").update(JSON.stringify({ name, recipe, base: "moss_image_sft_int8_convrot.safetensors", shift: 5,
+  return createHash("sha256").update(JSON.stringify({ name, recipe, base: recipe.base?.filename || "moss_image_sft_int8_convrot.safetensors", shift: 5,
     ...(recipe.policy ? { spectrum: MOSS_SPECTRUM } : {}), precision: recipe.adapter ? "experimental-int8-native-lora-requantization" : "native-int8" })).digest("hex");
 }

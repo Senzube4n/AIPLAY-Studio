@@ -20,6 +20,7 @@ const { QWEN_IMAGE_FILES, qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenIma
 const { applyPersona, personaFits } = await import("./personas.js");
 const { MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions } = await import("./moss-image.js");
 const { mossImageStatus } = await import("./moss-status.js");
+const { mossGenerationProvenance } = await import("./moss-provenance.js");
 const { safetyRefusal } = await import("./safety/refusal.js");
 const original = { run: engine.run, socket: engine.socket };
 const submitted = [], preflights = [];
@@ -197,7 +198,7 @@ test("API response, real queue, sampler and saved image provenance keep the same
     json: (_, status, body) => ({ status, body }),
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
     qwenImageStatus: async () => ({ ready: true }),
-    MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions, mossImageStatus,
+    MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions, mossImageStatus, mossGenerationProvenance,
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => null }, applyPersona, personaFits,
     stageQwenReferences: async (names) => names,
@@ -277,7 +278,7 @@ test("a Fast draft renders the LoRA graph and its picture and ledger line say so
     json: (_, status, body) => ({ status, body }),
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
     qwenImageStatus: async () => ({ ready: true }),
-    MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions, mossImageStatus,
+    MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions, mossImageStatus, mossGenerationProvenance,
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => null }, applyPersona, personaFits,
     stageQwenReferences: async (names) => names,

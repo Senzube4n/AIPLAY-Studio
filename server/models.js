@@ -65,7 +65,7 @@ import { config, isLightH3, offNvidia } from "./config.js";
 import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
-import { MOSS_PRESETS } from "./moss-presets.js";
+import { MOSS_PRESETS, MOSS_KROMOSS_MODEL, MOSS_DMD2_ADAPTER, MOSS_HIRES_ADAPTER } from "./moss-presets.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
 import {
@@ -2066,6 +2066,18 @@ export const CATALOG = [
     note: "13.01 GB in three native files. Requires ComfyUI's MOSS-Image architecture and moss_image text encoder type. Preset: 25 steps, CFG 2.5, er_sde/simple; prompt upsampling and skip-layer guidance off. Text-to-image only. Local quality, speed and memory limits are still being evaluated.",
     requires: { experimental: true, note: "No measured minimum memory requirement. Native runtime support is checked before queueing; older engines are not updated automatically." },
   },
+  {
+    id: MOSS_KROMOSS_MODEL.catalogueId, model: "moss-image", addonFor: "moss-image", group: "images", required: false,
+    label: "Kromoss INT8 (experimental)",
+    why: "A full MOSS fine-tune. Choose Kromoss Standard in Pictures for a matched comparison with MOSS SFT.",
+    licence: "Apache-2.0", home: HF + "/" + MOSS_KROMOSS_MODEL.repo,
+    outputRights: { class: "unrestricted", sellable: true, quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: HF + "/" + MOSS_KROMOSS_MODEL.repo + "/blob/" + MOSS_KROMOSS_MODEL.revision + "/LICENSE", note: PERMISSIVE_NOTE },
+    files: [{ url: MOSS_KROMOSS_MODEL.url, dest: M("diffusion_models/" + MOSS_KROMOSS_MODEL.filename), bytes: MOSS_KROMOSS_MODEL.bytes, sha256: MOSS_KROMOSS_MODEL.sha256 }],
+    note: "5.41 GB checkpoint. Reuses MOSS's Qwen3.5 GPTQ text encoder and small FLUX.2 VAE. The explicit Standard preset uses 25 steps, CFG 2.5, ER-SDE/simple and no skip-layer guidance. Publisher quality claims and timings from another checkpoint are not local benchmark results.",
+    requires: { experimental: true, note: "Needs the MOSS encoder and VAE plus native ComfyUI MOSS support. Exact checkpoint SHA is checked before queueing." },
+  },
   ...["turbo-4", "dmd-8"].map(preset => {
     const { adapter, steps } = MOSS_PRESETS[preset];
     return {
@@ -2085,6 +2097,30 @@ export const CATALOG = [
       requires: { experimental: true, note: "Shares the native MOSS base and runtime. No measured minimum memory requirement; exact adapter SHA is checked before queueing." },
     };
   }),
+  {
+    id: MOSS_DMD2_ADAPTER.catalogueId, addonFor: "moss-image", group: "images", required: false,
+    label: "Kromoss DMD2 8 (experimental)",
+    why: "Eight-step adapter for the Kromoss checkpoint. Choose its explicit Preset in Pictures.",
+    licence: "Apache-2.0", home: HF + "/" + MOSS_DMD2_ADAPTER.repo,
+    outputRights: { class: "unrestricted", sellable: true, quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License); adapter model card declares Apache-2.0",
+      url: HF + "/" + MOSS_DMD2_ADAPTER.repo + "/blob/" + MOSS_DMD2_ADAPTER.revision + "/README.md", note: PERMISSIVE_NOTE },
+    files: [{ url: MOSS_DMD2_ADAPTER.url, dest: M("loras/" + MOSS_DMD2_ADAPTER.filename), bytes: MOSS_DMD2_ADAPTER.bytes, sha256: MOSS_DMD2_ADAPTER.sha256 }],
+    note: "1.19 GB, strength 1, 8 steps, CFG 1, Euler/simple. Requires Kromoss INT8 plus the shared MOSS encoder and VAE. At most 1024 squared pixels and a 1536-pixel side. Native INT8 LoRA requantization is not claimed equivalent to publisher BF16 precision. No adapter stacks.",
+    requires: { experimental: true, note: "Exact checkpoint and adapter SHA checks run before queueing. Local speed and quality remain under evaluation." },
+  },
+  {
+    id: MOSS_HIRES_ADAPTER.catalogueId, addonFor: "moss-image", group: "images", required: false,
+    label: "MOSS HiRes v0.3 (experimental)",
+    why: "High-resolution LoHa adapter for the MOSS SFT checkpoint, with an explicit bounded preset.",
+    licence: "Not supplied by publisher", home: HF + "/" + MOSS_HIRES_ADAPTER.repo,
+    outputRights: { class: "unknown", sellable: null, quote: "",
+      clause: "", url: HF + "/" + MOSS_HIRES_ADAPTER.repo + "/tree/" + MOSS_HIRES_ADAPTER.revision,
+      note: "MOSS SFT's Apache-2.0 licence does not establish separate adapter terms. Check with the adapter publisher before commercial use." },
+    files: [{ url: MOSS_HIRES_ADAPTER.url, dest: M("loras/" + MOSS_HIRES_ADAPTER.filename), bytes: MOSS_HIRES_ADAPTER.bytes, sha256: MOSS_HIRES_ADAPTER.sha256 }],
+    note: "182 MB, strength 1, 25 steps, CFG 4, ER-SDE/simple, exactly 2048x2048 and one image per request. Uses native VAE decoding; no silent tiled fallback. Requires the three MOSS SFT base files. Quality and memory limits remain under evaluation.",
+    requires: { experimental: true, note: "Exact adapter SHA is checked before queueing. No universal VRAM minimum has been measured." },
+  },
   {
     // Official ComfyUI repack, checked against Hugging Face's LFS metadata on
     // 2026-09-21. These are Qwen Image 2.1 components; the older Qwen image VAE

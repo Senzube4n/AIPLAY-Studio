@@ -150,6 +150,53 @@ on Windows (server/sendfile.js).
 
 ## Making things
 
+### MOSS pictures: readiness and creation
+
+`GET /api/images/moss-status?mossPreset=PRESET` checks the selected recipe's
+native files, runtime nodes and sampler. It never starts a download or render,
+changes an engine or repairs dependencies. The response includes `ready`,
+`filesReady`, `runtimeReady`, `missingFiles`, `missingNodes`, `error`,
+`mossPreset` and `mossRecipe`. A pinned checkpoint or adapter must pass its SHA
+check before the recipe is ready.
+
+The preset values are `standard`, `spectrum-manual-h1`, `spectrum-adaptive-h2`,
+`turbo-4`, `dmd-8`, `kromoss-standard`, `kromoss-dmd2-8` and `moss-hires-v03`.
+Standard remains the default within MOSS. Readiness accepts optional `dit`,
+`encoder` and `vae` query values only when they match the selected verified
+bundle; it is not a way to load an arbitrary checkpoint.
+
+`POST /api/image` queues a picture through the same validator:
+
+```json
+{
+  "action":"create",
+  "engine":"moss-image",
+  "mossPreset":"kromoss-dmd2-8",
+  "prompt":"A red paper boat on blue water, crisp editorial illustration",
+  "seed":42,
+  "width":1024,
+  "height":1024,
+  "count":1
+}
+```
+
+Kromoss Standard fixes 25 steps, CFG 2.5, ER-SDE/simple and its own checkpoint.
+Kromoss DMD2 fixes 8 steps, CFG 1, Euler/simple and its own model-only adapter at
+strength 1; a negative prompt is refused. MOSS HiRes v0.3 fixes 25 steps, CFG 4,
+ER-SDE/simple, exactly 2048 × 2048 and one image, with the SFT checkpoint,
+HiRes adapter and ordinary native VAE decode. Omitted HiRes dimensions default
+to 2048 square. There is no automatic tiled fallback. All three keep native
+shift 5 and skip-layer guidance off. Custom adapter stacks, references,
+personas, editing, transparency and Fast draft are not accepted by MOSS.
+
+The matching MCP tools are `moss_image_status` and `make_image`; their field is
+`moss_preset`, while HTTP uses `mossPreset`. Use the same preset for readiness
+and creation. The creation receipt and image recipe retain the selected preset
+and recipe identity. The [Kromoss and HiRes guide](docs/MOSS_KROMOSS_HIRES.md)
+documents precise artifact pins, downloads, limits and HiRes's unknown adapter
+terms. Installing an addition does not change a saved default or update the
+active ComfyUI installation.
+
 ### Native YuE2 GGUF
 
 Available through the standalone `npm run start:music`, or **Music only** in the launcher

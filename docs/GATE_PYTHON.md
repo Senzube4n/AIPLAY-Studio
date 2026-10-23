@@ -8,6 +8,7 @@ ffprobe on PATH**. The mandatory real VFX RAM-preview lane additionally needs
 The mandatory RoPE derivative check also requires **CPU-only PyTorch**; the
 audio-analysis lane it enables requires matching **CPU-only torchaudio**. The
 active native adapter/bridge harnesses also require **safetensors**.
+The image-text, font measurement and vector checks require **fontTools**.
 
 The test uses temporary empty app data and the application's established
 `config.python` resolution: **AIPLAY_PYTHON**, then a saved interpreter, then
@@ -31,7 +32,7 @@ cannot be mistaken for repository suites by the unchanged registration census.
 ```powershell
 node scripts/setup-gate-python.mjs <existing-python-executable>
 $env:AIPLAY_PYTHON = (Resolve-Path tmp/gate-python/venv/Scripts/python.exe).Path
-& $env:AIPLAY_PYTHON -c "import numpy, scipy, av, soundfile, PIL, cv2, torch, safetensors; assert torch.version.cuda is None"
+& $env:AIPLAY_PYTHON -c "import numpy, scipy, av, soundfile, PIL, cv2, torch, safetensors, fontTools; assert torch.version.cuda is None"
 node server/daw/production_export_test.js
 node server/vfx/routes_ram_test.js
 & $env:AIPLAY_PYTHON scripts/rope_grad_check.py

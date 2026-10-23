@@ -632,7 +632,8 @@ function imageControlsFixture() {
   const input = /^\$\("imgCfg"\)\.oninput = .*$/m.exec(APP)?.[0];
   assert.ok(enginesStart > 0 && enginesEnd > enginesStart && changeStart > 0 && changeEnd > changeStart && input);
   const mossStart = APP.indexOf("const IMG_MOSS_PRESETS = {");
-  const mossEnd = APP.indexOf("\n};", mossStart) + 3;
+  const mossEnd = APP.indexOf("\nlet imgMossKey =", mossStart);
+  assert.ok(mossStart > 0 && mossEnd > mossStart, "exercise the real MOSS recipes and form state");
   vm.runInContext([APP.slice(enginesStart, enginesEnd), APP.slice(mossStart, mossEnd), fn("imgMossRecipe"), fn("imgMossQuery"), fn("imgMossCheck"), fn("imgMossShape"), fn("imgEffectiveEngine"), fn("ckptSampling"),
     fn("imgQwenShape"), fn("imgQwenQuery"), fn("imgRefsPaint"), fn("imgSampling"), APP.slice(changeStart, changeEnd), input].join("\n"), context);
   return { $, labels, context, refs,

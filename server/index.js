@@ -67,6 +67,7 @@ import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET } from "./moss-image.js";
 import { mossImageStatus } from "./moss-status.js";
+import { mossGenerationProvenance } from "./moss-provenance.js";
 import { createEngineRoutes } from "./engine/routes.js";
 import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
 import { stageRefModImage } from "./refmod-stage.js";
@@ -795,6 +796,7 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
               checkpoint: checkpoint ?? null,
               seed: seed ?? null,
               runId: runId ?? null,
+              ...mossGenerationProvenance(engine, imageOptions),
               /* FAST DRAFT, said in the ledger as well as on the row: the same
                * model with Viggle's turbo LoRA on it. Only on a draft, so every
                * other line keeps the shape the chain already has. */

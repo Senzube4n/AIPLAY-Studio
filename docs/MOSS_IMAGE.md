@@ -56,7 +56,7 @@ these CPU graph tests.
 
 ## Use
 
-In **Pictures**, select **MOSS-Image SFT (experimental, text only)**. Models
+In **Pictures**, select **MOSS-Image (experimental, text only)**. Models
 offers its three native files. An incompatible engine needs a separately
 prepared compatible installation; this option does not replace the current
 patched installation automatically.
@@ -65,9 +65,10 @@ Through MCP, call `moss_image_status`, then `make_image` with
 `engine: "moss-image"` and a text prompt. `set_image_engine` can remember an
 explicit preference. It is never chosen by the automatic recommendation while
 the integration remains experimental. `list_dits` and the own-file picker can
-recognize native MOSS tensor architecture rather than guessing from a name. Only
-the exact SFT INT8 bundle is enabled; other variants and renamed companions are
-refused until validated.
+recognize native MOSS tensor architecture rather than guessing from a name.
+Standard and the original accelerator presets use the exact SFT INT8 bundle.
+The explicit Kromoss presets select their own pinned checkpoint; arbitrary
+variants and renamed companions remain refused.
 
 Use matched prompts/resolutions and separate cold-load from warm timings when
 comparing it with Qwen. Review outputs for the task that matters: text, faces,
@@ -102,6 +103,20 @@ Through MCP, pass the same `moss_preset` to `moss_image_status` and `make_image`
 `standard`, `spectrum-manual-h1`, `spectrum-adaptive-h2`, `turbo-4` or `dmd-8`.
 The HTTP field is `mossPreset`. Image metadata records the actual graph policy,
 source revision or adapter release/strength/verified SHA, and a recipe fingerprint.
+
+### Kromoss and high-resolution options
+
+Three further explicit presets are available: `kromoss-standard` matches the
+default 25-step SFT sampling recipe with a different full checkpoint;
+`kromoss-dmd2-8` uses that checkpoint's own eight-step DMD2 adapter;
+`moss-hires-v03` uses the SFT checkpoint and a HiRes LoHa at exactly
+2048 × 2048, 25 steps, CFG 4 and count 1. Standard stays selected by default.
+These additions do not inherit the SFT timings or visual findings below.
+
+The [Kromoss and HiRes guide](MOSS_KROMOSS_HIRES.md) lists the extra Models rows,
+exact artifacts, recipes, MCP inputs and comparison limits. HiRes uses native
+VAE decoding and has no automatic tiled fallback. Its reviewed publisher release
+supplies no explicit adapter licence, so its terms remain unknown in Models.
 
 ### Local comparison, 22 October 2026
 
