@@ -1,0 +1,10 @@
+{
+  "client_id": "https://senzube4n.github.io/AIPLAY-Studio/.well-known/oauth-cimd.json",
+  "client_name": "AIPLAY Studio",
+  "client_uri": "https://senzube4n.github.io/AIPLAY-Studio/",
+  "redirect_uris": [
+    "http://127.0.0.1/api/models/access/callback",
+    "http://localhost/api/models/access/callback"
+  ],
+  "token_endpoint_auth_method": "none"
+}

@@ -99,6 +99,7 @@ import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkf
 import { stageLibrarySong, STAGED_SONG } from "./songstage.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow, musicCapabilityFor } from "./models.js";
 import { createLocalModelAccessRoutes } from './local-model-access.js';
+import { createHuggingFaceLogin } from './huggingface-login.js';
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -3197,8 +3198,10 @@ const setupRunner = oneRunner(createSetupRunner({
   activate: (metadata) => qwenActivation.activate(metadata),
 }), comfyMaintenance.runner);
 const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
+const modelAccessSecrets = { get:getSecret, set:setSecret, clear:clearSecret, status:secretStatus };
+const huggingFaceLogin = createHuggingFaceLogin({ secrets:modelAccessSecrets });
 const localModelAccessRoutes = createLocalModelAccessRoutes({ json, readBody, sameOriginLocalJson, models,
-  secrets: { get:getSecret, set:setSecret, clear:clearSecret, status:secretStatus }, modelsDir:() => config.modelsDir,
+  secrets:modelAccessSecrets, login:huggingFaceLogin, modelsDir:() => config.modelsDir,
   diskFree, uiPort:config.uiPort, enabled:() => !config.remoteOnly && !config.cloudOnly && !config.musicOnly });
 /* Fast covers (server/fastcover.js): song covers on the processor. The art
  * queue asks use() for every song cover it queues. */
@@ -3823,7 +3826,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/pages" || p.startsWith("/api/pages/")) {
       if (await myPages.handle(req, res, url, { json, readBody, sameOriginLocalJson })) return;
     }
-    if (p === '/api/models/access' && await localModelAccessRoutes(req, res, url)) return;
+    if ((p === '/api/models/access' || p === '/api/models/access/callback') && await localModelAccessRoutes(req, res, url)) return;
     if (p === "/api/voice" && await voiceRoute(req, res, url)) return;
     if (routerRoutes && (p === "/api/router" || p.startsWith("/api/router/"))) {
       if (await routerRoutes(req, res, url)) return;

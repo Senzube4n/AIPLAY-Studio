@@ -15,7 +15,7 @@ const TOKEN='hf_fixtureOnly1234567890ABCDEFGHIJK',HERE='127.0.0.1:4211';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 test.after(()=>rm(root,{recursive:true,force:true}));
 
-function fixture({fetchFn=async()=>new Response(null,{status:200}),free=50e9,statusError=false,enabled=true,onDisk=null,downloadError=null}={}) {
+function fixture({fetchFn=async()=>new Response(null,{status:200}),free=50e9,statusError=false,enabled=true,onDisk=null,downloadError=null,login=null}={}) {
   const keys=new Map(),calls={network:0,downloads:[],cancelled:0,bodyCaps:[]};let release;
   const secrets={get:async k=>keys.get(k)||null,set:async(k,v)=>keys.set(k,v),clear:async k=>keys.delete(k),status:async k=>{
     if(statusError)throw Error(TOKEN);
@@ -26,15 +26,91 @@ function fixture({fetchFn=async()=>new Response(null,{status:200}),free=50e9,sta
   const route=createLocalModelAccessRoutes({json:(res,status,body)=>Object.assign(res,{status,body}),
     readBody:async(req,max)=>{calls.bodyCaps.push(max);if(req.tooBig){const e=Error('big');e.tooBig=true;throw e;}return req.body;},
     sameOriginLocalJson:req=>req.headers.host===HERE&&(!req.headers.origin||req.headers.origin==='http://'+HERE)&&req.headers['content-type']==='application/json',
-    models,secrets,modelsDir:()=>root,diskFree:async()=>{await onDisk?.(keys);return {freeBytes:free,totalBytes:100e9};},uiPort:4211,enabled:()=>enabled,
+    models,secrets,login,modelsDir:()=>root,diskFree:async()=>{await onDisk?.(keys);return {freeBytes:free,totalBytes:100e9};},uiPort:4211,enabled:()=>enabled,
     fetchFn:async(...args)=>{calls.network++;return fetchFn(...args);}});
-  async function call(method='GET',body=null,headers={},query='?id=videoLtx',tooBig=false){
-    const res={},req={method,body,tooBig,headers:{host:HERE,origin:'http://'+HERE,'content-type':'application/json',...headers}};
+  async function call(method='GET',body=null,headers={},query='?id=videoLtx',tooBig=false,extra={}){
+    const res={},req={method,body,tooBig,socket:{remoteAddress:'127.0.0.1'},...extra,headers:{host:HERE,origin:'http://'+HERE,'content-type':'application/json',...headers}};
     assert.equal(await route(req,res,new URL('http://'+HERE+'/api/models/access'+query)),true);
     assert(!JSON.stringify(res.body).includes(TOKEN),'No response may disclose the key');return res;
   }
-  return {keys,calls,call,secrets,release:()=>release?.({ok:true})};
+  return {keys,calls,call,secrets,route,release:()=>release?.({ok:true})};
 }
+
+function signedLogin() {
+  const token='hf_oauth_fixtureOnly1234567890ABCDEFGHIJK';
+  let state='idle',revision=1,connected=false;
+  const calls={starts:0,cancels:0,forgets:0,callbacks:0,refreshes:0};
+  const auth=()=>({set:connected,usable:connected,method:'dpapi',encrypted:true,kind:'oauth',savedAt:'2026-10-24T00:00:00Z',expiresAt:'2026-10-25T00:00:00Z'});
+  const login={status:async()=>({state,auth:auth()}),
+    start:async origin=>{assert.equal(origin,'http://'+HERE);calls.starts++;state='waiting';return {authorizationUrl:'https://huggingface.co/oauth/authorize?client_id=fixture'};},
+    cancel:async()=>{calls.cancels++;state='cancelled';},
+    forget:async()=>{calls.forgets++;connected=false;revision++;state='idle';},
+    callback:async(url,origin)=>{assert.equal(url.origin,'http://'+HERE);assert.equal(origin,'http://'+HERE);calls.callbacks++;connected=true;state='connected';return {ok:true,message:token};},
+    credential:async({refresh=false}={})=>{if(refresh)calls.refreshes++;return connected?{token,auth:auth(),signature:'server-only-signature-'+revision}:null;}};
+  return {login,calls,token,connect(){connected=true;state='connected';},change(){revision++;}};
+}
+
+async function callback(f,{headers={},method='GET',extra={}}={}) {
+  const res={writeHead(status,h){this.status=status;this.headers=h;},end(body){this.body=body;}};
+  const req={method,socket:{remoteAddress:'127.0.0.1'},headers:{host:HERE,'sec-fetch-site':'cross-site','sec-fetch-dest':'document',...headers},...extra};
+  // The production router deliberately uses a dummy URL base without a port.
+  assert.equal(await f.route(req,res,new URL('/api/models/access/callback?code=fake-code&state=fake-state','http://localhost')),true);
+  return res;
+}
+
+test('browser login starts only from this PC and status never returns its authorization data or credentials',async()=>{
+  const s=signedLogin(),f=fixture({login:s.login});
+  assert.equal((await f.call()).body.oauth.state,'idle');assert.equal(s.calls.starts,0);assert.equal(f.calls.network,0);
+  for(const extra of [{lanClient:true},{socket:{remoteAddress:'192.168.1.2'}}])
+    assert.equal((await f.call('POST',{id:'videoLtx',action:'login'},{},'?id=videoLtx',false,extra)).status,403);
+  assert.equal(s.calls.starts,0);
+  const start=await f.call('POST',{id:'videoLtx',action:'login'});assert.equal(start.status,200);assert.match(start.body.oauth.authorizationUrl,/^https:\/\/huggingface.co\/oauth\/authorize/);
+  const status=(await f.call()).body;assert.equal(status.oauth.state,'waiting');assert.equal(status.oauth.authorizationUrl,undefined);assert.equal(status.auth.value,undefined);assert.equal(f.calls.network,0);
+  const cancel=await f.call('POST',{id:'videoLtx',action:'login-cancel'});assert.equal(cancel.body.oauth.state,'cancelled');assert.equal(s.calls.cancels,1);
+});
+
+test('OAuth callback alone permits provider navigation, checks fixed files once and emits a code-free page',async()=>{
+  const s=signedLogin(),seen=[],f=fixture({login:s.login,fetchFn:async(url,init)=>{seen.push(init.headers.Authorization);return new Response(null,{status:200});}});
+  const result=await callback(f);assert.equal(result.status,200);assert.match(result.body,/Signed in/);assert(!result.body.includes(s.token));assert(!result.body.includes('fake-code'));assert(!result.body.includes('fake-state'));
+  assert.equal(result.headers['Cache-Control'],'no-store');assert.equal(result.headers['Referrer-Policy'],'no-referrer');assert.match(result.headers['Content-Security-Policy'],/default-src 'none'/);
+  assert.equal(f.calls.network,5);assert(seen.every(v=>v==='Bearer '+s.token));assert.equal(f.calls.downloads.length,0,'Sign-in never installs a model');
+  const status=(await f.call()).body;assert.equal(status.auth.kind,'oauth');assert.equal(status.access.state,'granted');assert.equal(status.oauth.auth,undefined);assert(!JSON.stringify(status).includes('server-only-signature'));assert(!JSON.stringify(status).includes(s.token));assert.equal(f.calls.network,5,'Saved GET status never repeats HEAD or refresh');
+  for(const options of [{method:'POST'},{extra:{lanClient:true}},{extra:{socket:{remoteAddress:'192.168.1.2'}}},{headers:{origin:'https://evil.example'}},{headers:{'sec-fetch-dest':'iframe'}}])assert.equal((await callback(f,options)).status,403);
+  assert.equal(s.calls.callbacks,1);
+});
+
+test('OAuth preserves native terms and stale-credential guards, and manual fallback explicitly replaces the login',async()=>{
+  const s=signedLogin();s.connect();const f=fixture({login:s.login,onDisk:()=>s.change()});
+  assert.equal((await f.call('POST',{id:'videoLtx',action:'install'})).status,400);assert.equal(f.calls.network,0);
+  const changed=await f.call('POST',{id:'videoLtx',action:'install',acceptLicense:true});assert.equal(changed.status,409);assert.equal(changed.body.reason,'credentials-changed');assert.equal(f.calls.downloads.length,0);
+  const plain=fixture({login:s.login});const replace=await plain.call('POST',{id:'videoLtx',action:'connect',token:TOKEN});assert.equal(replace.status,200);assert.equal(s.calls.forgets,1);assert.equal(plain.keys.get(LOCAL_MODEL_ACCESS_KEY),TOKEN);assert.notEqual(replace.body.auth.kind,'oauth');
+});
+
+test('disconnect removes the selected credential and a failed OAuth removal preserves the manual token',async()=>{
+  const s=signedLogin();s.connect();const f=fixture({login:s.login});f.keys.set(LOCAL_MODEL_ACCESS_KEY,TOKEN);
+  const forget=s.login.forget;s.login.forget=async()=>{throw Error('vault '+TOKEN);};
+  const failed=await f.call('POST',{id:'videoLtx',action:'forget'});assert.equal(failed.status,503);assert.equal(failed.body.reason,'disconnect-failed');assert.equal(f.keys.get(LOCAL_MODEL_ACCESS_KEY),TOKEN);assert(!JSON.stringify(failed.body).includes('vault'));
+  s.login.forget=forget;
+  const disconnected=await f.call('POST',{id:'videoLtx',action:'forget'});assert.equal(disconnected.status,200);assert.equal(f.keys.get(LOCAL_MODEL_ACCESS_KEY),TOKEN);assert.equal(disconnected.body.access.state,'unchecked');assert.notEqual(disconnected.body.auth.kind,'oauth');
+  await f.call('POST',{id:'videoLtx',action:'forget'});assert.equal(f.keys.size,0);
+});
+
+test('failure to resolve an expired grant clears previously granted access before responding',async()=>{
+  const s=signedLogin();s.connect();const f=fixture({login:s.login});
+  assert.equal((await f.call('POST',{id:'videoLtx',action:'check'})).body.access.state,'granted');
+  s.login.credential=async()=>null;
+  const failed=await f.call('POST',{id:'videoLtx',action:'check'});assert.equal(failed.status,401);assert.notEqual(failed.body.access.state,'granted');
+  assert.notEqual((await f.call()).body.access.state,'granted');assert.equal(f.calls.downloads.length,0);
+});
+
+test('forget invalidates a first pending login even before it has saved a grant',async()=>{
+  const s=signedLogin(),f=fixture({login:s.login});
+  await f.call('POST',{id:'videoLtx',action:'login'});
+  assert.equal((await f.call()).body.oauth.state,'waiting');
+  await f.call('POST',{id:'videoLtx',action:'forget'});
+  assert.equal(s.calls.forgets,1,'Pending login must use the same invalidating removal path as a saved grant');
+  assert.equal((await f.call()).body.oauth.state,'idle');
+});
 
 test('status is offline, reuses only the explicit vault key and exposes no key value',async()=>{
   const f=fixture();

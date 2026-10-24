@@ -1595,11 +1595,19 @@ none of them carries a key:
 | `AIPLAY_APPDATA` | where settings and `secrets.json` live (tests use it to stay off your real profile) |
 
 Optional LTX 2.5 setup lives in **Models → Set up LTX**. Approve access on the
-publisher's Hugging Face page, connect a read token in Studio, then install.
-Studio uses its existing model-provider secret store and shows whether the saved
-token is protected by Windows DPAPI or by file permissions. A token saved by
+publisher's Hugging Face page, sign in through Studio's browser button, then install.
+The public desktop client uses PKCE and requests only `gated-repos`; it does not
+request private repository access or a distributed client secret. Its public
+client metadata is served by this repository's existing GitHub Pages site.
+Studio keeps the resulting OAuth credentials in its existing protected secret
+store, separately from any manually entered read token. It shows whether the
+credential is protected by Windows DPAPI or by file permissions. A token saved by
 another Studio copy is identified before reuse. It is never returned to the
-browser or put in settings, download URLs, logs or project files.
+browser or put in settings, download URLs, logs or project files. If the grant
+includes a refresh token, Studio refreshes only during an explicit access check
+or install; opening Models never contacts the OAuth provider. Without a usable
+refresh grant, expiry asks for sign-in again. Disconnect clears the local grant;
+it does not claim to revoke the app on Hugging Face.
 
 The installer uses the configured model folders and the catalogue's pinned
 files, with resumable downloads and checksum verification. It does not read

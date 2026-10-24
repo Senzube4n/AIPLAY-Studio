@@ -2,3 +2,4 @@
 #localModelAccess .params .pv { min-width: 0; overflow-wrap: anywhere; justify-content: flex-start; }
 #localModelAccess .params { margin-bottom: 12px; }
 #localModelAccess #ltxAccessForm .cta { margin-top: 8px; }
+#localModelAccess .ltx-sign-in { margin-bottom: 8px; flex-wrap: wrap; }

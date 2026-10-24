@@ -144,7 +144,7 @@ const ltx = CATALOG.find((c) => c.gated);
 if (ltx && (!quiet || missing)) {
   line(`  OPTIONAL  ${ltx.label}`);
   line(`        Open Studio > Models > Set up LTX. Approve publisher access,`);
-  line(`        connect a Hugging Face read token there, then choose Install.`);
+  line(`        sign in with Hugging Face there, then choose Install.`);
   line(`        Studio handles the folders, resume and file verification.`);
   line(`        Licence and access: ${ltx.gated.url}`);
   line(`        You can skip LTX and use the rest of Studio.`);

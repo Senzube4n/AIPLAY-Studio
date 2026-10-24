@@ -417,7 +417,7 @@ its licence, what it needs from your hardware, and one button. You choose what
 you want and when.
 
 **LTX 2.5 is optional.** Its **Set up LTX** button guides you through publisher
-access and a Hugging Face read token; Studio handles the download and file
+access and Hugging Face sign-in; Studio handles the download and file
 verification. No Python commands are needed. See [local model setup](docs/LOCAL_MODEL_SETUP.md).
 
 <!-- MODELS:BEGIN -->

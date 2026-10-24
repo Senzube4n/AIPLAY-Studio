@@ -4930,19 +4930,23 @@
         <p class="pcard-sub">Connect your Hugging Face account to install this optional video model.</p>
         <h4>1. Publisher access</h4>
         <a class="edtool sm" href="https://huggingface.co/Lightricks/LTX-2.5" target="_blank" rel="noopener noreferrer">Open model page</a>
-        <p class="hint">Accept the publisher's terms on Hugging Face, using the account that owns your token.</p>
+        <p class="hint">Accept the publisher's terms using the Hugging Face account you connect below.</p>
         <h4>2. Connect Hugging Face</h4>
-        <p class="hint" id="ltxAccessSaved"></p><span class="chip" id="ltxAccessStorage">No token saved</span>
-        <form id="ltxAccessForm">
-          <label class="flabel" for="ltxAccessToken">Read token</label>
-          <input class="line" id="ltxAccessToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="500" placeholder="hf_…">
-          <div class="cta"><button class="edtool sm" type="submit" id="ltxAccessConnect">Connect token</button><button class="edtool sm" type="button" id="ltxAccessForget">Forget token</button><button class="edtool sm" type="button" id="ltxAccessCheck">Check access</button></div>
-        </form>
-        <details class="more"><summary>Token and storage</summary>
+        <div class="cta ltx-sign-in"><button class="btn2" type="button" id="ltxAccessLogin">Sign in with Hugging Face</button><button class="edtool sm" type="button" id="ltxAccessLoginCancel" hidden>Cancel sign-in</button></div>
+        <p class="hint" id="ltxAccessSaved"></p><span class="chip" id="ltxAccessStorage">No credential saved</span>
+        <div class="cta"><button class="edtool sm" type="button" id="ltxAccessCheck">Check access</button><button class="edtool sm" type="button" id="ltxAccessForget">Disconnect</button></div>
+        <details class="more"><summary>Use a read token</summary>
+          <form id="ltxAccessForm">
+            <label class="flabel" for="ltxAccessToken">Read token</label>
+            <input class="line" id="ltxAccessToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="500" placeholder="hf_…">
+            <div class="cta"><button class="edtool sm" type="submit" id="ltxAccessConnect">Connect token</button></div>
+          </form>
           <p><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a read token</a> for Lightricks/LTX-2.5; write permission is not needed.</p>
           <p>A fine-grained token must include read access to this gated repository after your account has been granted access.</p>
+        </details>
+        <details class="more"><summary>Storage</summary>
           <p class="hint" id="ltxAccessProtection"></p>
-          <p class="hint">This saved token is shared with Studio's Hugging Face model browser.</p>
+          <p class="hint">Browser sign-in is used for gated-model setup.</p>
         </details>
         <h4>3. Install files</h4>
         <div class="params"><label>Download</label><span class="pv" id="ltxAccessTotal">Checking…</span><label>Missing</label><span class="pv" id="ltxAccessMissing">Checking…</span><label>Destination</label><span class="pv" id="ltxAccessDestination">Checking…</span><label>Free space</label><span class="pv" id="ltxAccessFree">Checking…</span></div>

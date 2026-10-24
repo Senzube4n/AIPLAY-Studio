@@ -15,7 +15,7 @@ class Control {
   fire(type) { return this.listeners.get(type)?.({ preventDefault() {} }); }
   set innerHTML(_value) { throw Error('Use textContent for provider or secret metadata'); }
 }
-const initial = () => ({ capability: 'videoLtx', auth: { set: false, usable: false },
+const initial = () => ({ capability: 'videoLtx', auth: { set: false, usable: false }, oauth: { state: 'idle', message: '' },
   access: { state: 'not-connected', message: 'Connect a read token.' },
   files: { totalBytes: 39689918812, missingBytes: 39689918812, ready: false },
   modelsDir: 'D:/Models', diskFree: { freeBytes: 60e9 }, installing: false });
@@ -23,7 +23,7 @@ const authorized = () => ({ ...initial(), auth: { set: true, usable: true, metho
   hint: '…abcd', said: 'Using the token …abcd saved in Studio.', protection: 'Encrypted with Windows DPAPI.' },
   access: { state: 'granted', message: '' } });
 function fixture(request, options = {}) {
-  const controls = Object.fromEntries(['Token','Form','Connect','Forget','Check','Terms','Install','Cancel','State','Message','Saved','Storage','Protection','Total','Missing','Destination','Free','Close']
+  const controls = Object.fromEntries(['Login','LoginCancel','Token','Form','Connect','Forget','Check','Terms','Install','Cancel','State','Message','Saved','Storage','Protection','Total','Missing','Destination','Free','Close']
     .map(name => [name, new Control()]));
   let nav = 0, changed = 0;
   const root = { hidden: true, querySelector: sel => controls[sel.replace('#ltxAccess', '')],
@@ -207,6 +207,173 @@ test('file-permissions protection is not called encrypted, and insufficient disk
   assert.equal(f.controls.Token.value, '');
 });
 
+const waiting = () => ({ ...initial(), oauth: { state: 'waiting', message: 'Finish signing in on Hugging Face.',
+  authorizationUrl: 'https://huggingface.co/oauth/authorize?client_id=studio&response_type=code&code_challenge=mock' } });
+const signedIn = () => ({ ...authorized(), auth: { ...authorized().auth, kind: 'oauth', said: 'Signed in with Hugging Face.' },
+  oauth: { state: 'connected', message: 'Signed in.' } });
+function popupFixture() {
+  const navigations = [];
+  const popup = { opener: {}, closed: false, focus() {}, close() { this.closed = true; },
+    location: { set href(value) { navigations.push(value); } } };
+  return { popup, navigations };
+}
+
+test('browser login opens its detached popup synchronously before POST and uses only its HF authorization URL', async () => {
+  const calls = [], p = popupFixture();
+  let opened = false;
+  const f = fixture(async action => {
+    calls.push(action);
+    if (!action) return initial();
+    assert.equal(opened, true, 'popup created before the first async request');
+    assert.equal(p.popup.opener, null, 'authorization page cannot reach Studio through opener');
+    return waiting();
+  }, { openPopup() { opened = true; return p.popup; } });
+  await f.controller.show();
+  f.controls.Login.fire('click');
+  assert.equal(opened, true, 'click opens before it returns');
+  await tick();
+  assert.deepEqual(calls, [undefined, 'login']);
+  assert.deepEqual(p.navigations, [waiting().oauth.authorizationUrl]);
+  assert.equal(f.controls.LoginCancel.hidden, false);
+  assert.equal(f.controls.Install.disabled, true);
+  assert.equal(f.controls.Terms.checked, false);
+  for (const c of Object.values(f.controls)) assert.ok(!c.textContent.includes('code_challenge'));
+  f.controller.hide();
+});
+
+test('a blocked popup makes no login request and gives a deliberate retry', async () => {
+  const calls = [], f = fixture(async action => { calls.push(action); return initial(); }, { openPopup: () => null });
+  await f.controller.show();
+  f.controls.Login.fire('click'); await tick();
+  assert.deepEqual(calls, [undefined]);
+  assert.match(f.controls.Message.textContent, /Allow pop-ups/);
+  assert.equal(f.controls.Login.disabled, false);
+});
+
+test('returned authorization links cannot navigate to another origin, credentials, protocol or path', async () => {
+  for (const url of ['http://huggingface.co/oauth/authorize', 'https://huggingface.co.evil.test/oauth/authorize',
+    'https://user:pass@huggingface.co/oauth/authorize', 'https://huggingface.co/settings/tokens', 'javascript:bad()', undefined]) {
+    const p = popupFixture();
+    const f = fixture(async action => action ? { ...waiting(), oauth: { ...waiting().oauth, authorizationUrl: url } } : initial(),
+      { openPopup: () => p.popup });
+    await f.controller.show(); f.controls.Login.fire('click'); await tick();
+    assert.deepEqual(p.navigations, [], String(url));
+    assert.equal(p.popup.closed, true);
+    assert.match(f.controls.Message.textContent, /could not be opened/);
+    assert.equal(f.controls.Install.disabled, true);
+  }
+});
+
+test('cancel remains usable during login start and a late start cannot navigate or reconnect', async () => {
+  const calls = [], p = popupFixture();
+  let finishStart;
+  const f = fixture(async action => {
+    calls.push(action);
+    if (action === 'login') return new Promise(resolve => { finishStart = resolve; });
+    return action === 'login-cancel' ? { ...initial(), oauth: { state: 'cancelled', message: 'Sign-in cancelled.' } } : initial();
+  }, { openPopup: () => p.popup });
+  await f.controller.show(); f.controls.Login.fire('click');
+  assert.equal(f.controls.LoginCancel.disabled, false);
+  assert.equal(f.controls.LoginCancel.hidden, false);
+  f.controls.LoginCancel.fire('click'); await tick();
+  assert.equal(p.popup.closed, true);
+  finishStart(waiting()); await tick();
+  assert.deepEqual(calls, [undefined, 'login', 'login-cancel']);
+  assert.deepEqual(p.navigations, []);
+  assert.equal(f.controls.State.textContent, 'Sign-in cancelled');
+  assert.equal(f.controls.Login.disabled, false);
+  assert.equal(f.controls.LoginCancel.hidden, true);
+});
+
+test('offline waiting and callback-check status are polled until access finishes without accepting terms or installing', async () => {
+  const timers = [], calls = [], p = popupFixture();
+  let phase = 0;
+  const f = fixture(async action => {
+    calls.push(action);
+    if (action === 'login') { phase = 1; return waiting(); }
+    if (phase++ === 1) return { ...signedIn(), access: { state: 'checking', message: 'Checking access.' } };
+    return phase > 2 ? signedIn() : initial();
+  }, { openPopup: () => p.popup, setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer() {} });
+  await f.controller.show(); f.controls.Login.fire('click'); await tick();
+  assert.equal(timers.length, 1);
+  await timers[0]();
+  assert.equal(f.controls.State.textContent, 'Checking access');
+  assert.equal(p.popup.closed, true);
+  assert.equal(timers.length, 2);
+  await timers[1]();
+  assert.equal(f.controls.State.textContent, 'Access ready');
+  assert.equal(f.controls.Saved.textContent, 'Signed in with Hugging Face.');
+  assert.equal(f.controls.Forget.textContent, 'Disconnect');
+  assert.equal(f.controls.Protection.textContent, 'Encrypted with Windows DPAPI.');
+  assert.equal(f.controls.Install.disabled, true, 'sign-in cannot accept publisher terms');
+  assert.equal(f.controls.Terms.checked, false);
+  assert.deepEqual(calls, [undefined, 'login', undefined, undefined]);
+  assert.equal(timers.length, 2, 'grant stops saved-status polling');
+  const reused = signedIn();
+  reused.auth.savedHere = false;
+  reused.auth.said = 'Signed in with Hugging Face. Saved by another copy of Studio.';
+  const other = fixture(async () => reused);
+  await other.controller.show();
+  assert.equal(other.controls.Saved.textContent, reused.auth.said, 'server-owned copy provenance remains visible');
+});
+
+test('manually closing the popup does not cancel a completed provider login', async () => {
+  const timers = [], calls = [], p = popupFixture();
+  let started = false;
+  const f = fixture(async action => {
+    calls.push(action);
+    if (action === 'login') { started = true; return waiting(); }
+    return started ? signedIn() : initial();
+  }, { openPopup: () => p.popup, setTimer: fn => { timers.push(fn); return 1; }, clearTimer() {} });
+  await f.controller.show(); f.controls.Login.fire('click'); await tick(); p.popup.close();
+  await timers[0]();
+  assert.equal(f.controls.State.textContent, 'Access ready');
+  assert.equal(calls.includes('login-cancel'), false);
+  assert.equal(calls.includes('install'), false);
+});
+
+test('expired, declined and failed logins stop polling and can be retried', async () => {
+  for (const [state, label] of [['expired', 'Sign-in expired'], ['denied', 'Sign-in declined'], ['error', 'Sign-in failed']]) {
+    const timers = [], p = popupFixture(); let started = false;
+    const f = fixture(async action => {
+      if (action === 'login') { started = true; return waiting(); }
+      return started ? { ...initial(), oauth: { state, message: 'Sign in again to continue.' } } : initial();
+    }, { openPopup: () => p.popup, setTimer: fn => { timers.push(fn); return 1; }, clearTimer() {} });
+    await f.controller.show(); f.controls.Login.fire('click'); await tick(); await timers[0]();
+    assert.equal(f.controls.State.textContent, label);
+    assert.equal(f.controls.Login.disabled, false);
+    assert.equal(p.popup.closed, true);
+    assert.equal(timers.length, 1);
+  }
+});
+
+test('cancellation invalidates an in-flight saved-status response', async () => {
+  const timers = [], p = popupFixture(); let started = false, finishPoll;
+  const f = fixture(async action => {
+    if (action === 'login') { started = true; return waiting(); }
+    if (action === 'login-cancel') return { ...initial(), oauth: { state: 'cancelled' } };
+    return started ? new Promise(resolve => { finishPoll = resolve; }) : initial();
+  }, { openPopup: () => p.popup, setTimer: fn => { timers.push(fn); return 1; }, clearTimer() {} });
+  await f.controller.show(); f.controls.Login.fire('click'); await tick();
+  const poll = timers[0]();
+  f.controls.LoginCancel.fire('click'); await tick(); finishPoll(signedIn()); await poll;
+  assert.equal(f.controls.State.textContent, 'Sign-in cancelled');
+  assert.equal(f.controls.Install.disabled, true);
+  assert.equal(f.controls.Saved.textContent, 'Not connected to Hugging Face.');
+});
+
+test('hidden tabs suspend saved-login polling and visibility return resumes local status only', async () => {
+  const timers = [], calls = [], f = fixture(async action => { calls.push(action); return waiting(); },
+    { setTimer: fn => { timers.push(fn); return 1; }, clearTimer() {} });
+  await f.controller.show(); f.doc.hidden = true; f.controller.visibilityChanged();
+  await timers[0]();
+  assert.equal(calls.length, 1);
+  f.doc.hidden = false; await f.controller.visibilityChanged();
+  assert.deepEqual(calls, [undefined, undefined]);
+  f.controller.hide(); await timers.at(-1)();
+  assert.equal(calls.length, 2);
+});
+
 test('fresh local plans omit gated video; saved local choices and cloud defaults are preserved', () => {
   assert.deepEqual(selectionFor({}, 'local'), { music: 'yue2-comfy', pictures: 'sdxl-turbo' });
   const config = { modelSetup: { local: { video: 'ltx25' } }, cloudSetup: { goal: 'all' }, music: {} };
@@ -225,6 +392,8 @@ test('the planner and Models buttons navigate to a mounted inline card using exi
   assert.match(html, /id="localModelAccess" hidden class="pcard"/);
   assert.ok(html.indexOf('id="localModelAccess"') < html.indexOf('id="modelList"'));
   assert.match(html, /id="ltxAccessToken" type="password" autocomplete="off"/);
+  assert.match(html, /id="ltxAccessLogin">Sign in with Hugging Face<\/button>/);
+  assert.match(html, /<details class="more"><summary>Use a read token<\/summary>\s*<form id="ltxAccessForm">/);
   const module = source('../web/local-model-access.js');
   assert.doesNotMatch(module, /localStorage|sessionStorage|innerHTML|hf auth|fetch_ltx25|\/api\/runpod/);
   assert.match(module, /id: 'videoLtx', action/);
