@@ -11,6 +11,8 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check scripts/verify-install.mjs || exit 1
+node --experimental-vm-modules --test server/install-payload_test.js || exit 1
 # Sound output contracts: old cache bytes, transparent unity, PCM headroom.
 node --test server/daw/output-mode_test.js || exit 1
 python server/daw/output_mode_test.py || exit 1

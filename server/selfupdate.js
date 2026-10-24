@@ -48,7 +48,7 @@ export const BUILDS = [
 ];
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const HEADERS = { "User-Agent": "AIPLAY-Studio", Accept: "application/vnd.github+json" };
-const DEFAULT_INCLUDE = ["server", "web", "workflows", "launcher", "scripts", "package.json", "package-lock.json",
+const DEFAULT_INCLUDE = ["server", "web", "workflows", "launcher", "scripts", "worker", "shared", "install.json", "package.json", "package-lock.json",
   "AIPLAY Studio.exe", "AIPLAY Studio.cmd", "LICENSE", "NOTICE"];
 
 const run = (cmd, args, opts = {}) => new Promise((ok, fail) => {
@@ -57,6 +57,41 @@ const run = (cmd, args, opts = {}) => new Promise((ok, fail) => {
   });
 });
 const readJson = async (f) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return null; } };
+
+async function installManifest(root) {
+  let raw;
+  try { raw = await readFile(path.join(root, "install.json"), "utf8"); }
+  catch (e) { if (e.code === "ENOENT") return null; throw new Error("The install manifest could not be read."); }
+  let manifest;
+  try { manifest = JSON.parse(raw); } catch { throw new Error("The install manifest is not valid JSON."); }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)
+    || !Array.isArray(manifest.include) || !manifest.include.length
+    || manifest.include.some(name => typeof name !== "string" || !name || name === "." || name === ".." || /[\\/:]/.test(name)))
+    throw new Error("The install manifest must name top-level app files and folders.");
+  for (const key of ["exclude", "keep", "preserve", "required"]) {
+    if (manifest[key] !== undefined && (!Array.isArray(manifest[key]) || manifest[key].some(value => typeof value !== "string" || !value)))
+      throw new Error(`The install manifest has an invalid ${key} list.`);
+  }
+  for (const key of ["preserve", "required"]) for (const name of manifest[key] || []) {
+    if (/[\\:]/.test(name) || name.startsWith("/") || name.split("/").some(part => !part || part === "." || part === ".."))
+      throw new Error(`The install manifest has an unsafe ${key} path.`);
+  }
+  return manifest;
+}
+
+/** Parse only. Never import or start the downloaded application to test it. */
+async function verifyRuntime(root, manifest, command) {
+  const checker = path.join(root, "scripts", "verify-install.mjs");
+  if (!existsSync(checker)) {
+    if (manifest?.required !== undefined) throw new Error("The runtime validator is missing from this build.");
+    return; // Compatibility with historical builds that did not ship a checker.
+  }
+  let output;
+  try { output = JSON.parse(await command(process.execPath,
+    ["--experimental-vm-modules", checker, "--root", root], { cwd: root, timeout: 120_000 })); }
+  catch { throw new Error("The runtime files failed validation. Download the current installer to repair this build."); }
+  if (output?.ok !== true) throw new Error("The runtime files failed validation. Download the current installer to repair this build.");
+}
 
 /** Where this install updates from, and how. */
 export async function updateSource(root = ROOT_DEFAULT) {
@@ -217,6 +252,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
   try { pick = await forwardBuild(src.repo); }
   catch (e) { return { ok: false, changed: false, line: e.name === "TimeoutError" ? "GitHub did not answer in time." : e.message }; }
   const { sha, date, repo, label, note } = pick;
+  let repairing = false;
   if (note) say(`${note}.`);
   if (src.have) {
     if (!/^[0-9a-f]{7,40}$/i.test(src.have)) return { ok: false, changed: false,
@@ -234,10 +270,16 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
       }
     }
     if (relation === "identical") {
-      const lock = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
-      return dependencies(lock, false, "Already up to date.");
+      try {
+        await verifyRuntime(root, await installManifest(root), command);
+        const lock = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
+        return dependencies(lock, false, "Already up to date.");
+      } catch {
+        repairing = true;
+        say(`Runtime files are incomplete. Repairing the same build ${sha.slice(0, 7)}…`);
+      }
     }
-    if (relation !== "ahead") return { ok: false, changed: false,
+    if (relation !== "ahead" && !repairing) return { ok: false, changed: false,
       line: relation === "behind" ? `${label} is older than installed ${src.have}. Update will not downgrade this install. Nothing was downloaded or changed.`
         : relation === "diverged" ? `${label} has diverged from installed ${src.have}. Update will not discard this install's commits. Nothing was downloaded or changed.`
           : `GitHub did not confirm that ${label} contains installed ${src.have}. Nothing was downloaded or changed. Try Update again later.` };
@@ -260,13 +302,22 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
     if (!top || !existsSync(path.join(fresh, "launcher", "launcher.mjs"))) {
       return { ok: false, changed: false, line: "The download is not a Studio build (no launcher inside). Nothing was changed." };
     }
-    const manifest = await readJson(path.join(fresh, "install.json"));
+    const manifest = await installManifest(fresh);
     const include = [...(manifest?.include || DEFAULT_INCLUDE)];
     const exclude = manifest ? manifest.exclude || [] : ["*.md"];
     const keep = manifest ? manifest.keep || [] : ["LICENSE*", "NOTICE*"];
     /* Folders inside the app that hold the person's own files. They come
      * across from the old copy; a file the new build also ships wins. */
     const preserve = manifest?.preserve || ["workflows/custom"];
+
+    // Validate what will actually be copied, including the manifest's exclusions,
+    // while every old app folder is still untouched.
+    for (const name of include) {
+      const from = path.join(fresh, name);
+      if (existsSync(from) && (await stat(from)).isDirectory()) await prune(from, exclude, keep);
+    }
+    say("Checking the downloaded runtime files…");
+    await verifyRuntime(fresh, manifest, command);
 
     say("Replacing the app files…");
     const lockBefore = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
@@ -279,7 +330,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
       include.push("install-info.json");
     }
     await replaceAppFiles({ root, fresh, include, exclude, keep, preserve });
-    return dependencies(lockBefore, true, `Updated to ${sha.slice(0, 7)} from ${label}${note ? ` (${note})` : ""}. Close the launcher and open it again to use the new version.`);
+    return dependencies(lockBefore, true, `${repairing ? "Repaired runtime files at" : "Updated to"} ${sha.slice(0, 7)} from ${label}${note ? ` (${note})` : ""}. Close the launcher and open it again to use the new version.`);
   } catch (e) {
     return { ok: false, changed: !!e.rollbackFailed, line: `The update stopped: ${e.message}` };
   } finally {

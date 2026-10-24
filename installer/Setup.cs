@@ -62,8 +62,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +71,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.3";
+    public const string SetupVersion = "1.4";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -361,7 +361,7 @@ sealed class Installer
 
     // What ships when a repository has no install.json yet. Kept to what the
     // app needs at run time; the repository's own list wins whenever it exists.
-    static readonly string[] DefaultInclude = { "server", "web", "workflows", "launcher", "scripts",
+    static readonly string[] DefaultInclude = { "server", "web", "workflows", "launcher", "scripts", "worker", "shared", "install.json",
         "package.json", "package-lock.json", "AIPLAY Studio.exe", "AIPLAY Studio.cmd", "LICENSE", "NOTICE" };
     static readonly string[] DefaultExclude = { "*.md" };
     static readonly string[] DefaultKeep = { "LICENSE*", "NOTICE*" };
@@ -464,6 +464,9 @@ sealed class Installer
             // 4. Node.js.
             Say(4, "Checking for Node.js");
             string nodeExe = FindNode(work, stage, result);
+            // Parse the staged startup imports without running Studio or its engine.
+            // An incomplete download must never replace the person's working install.
+            ValidatePayload(nodeExe, stage);
             // A build whose launcher predates the private Node cannot find it.
             string launcherSrc = Path.Combine(stage, @"launcher\exe\AiplayLauncher.cs");
             if (IsPrivate(nodeExe, stage) && File.Exists(launcherSrc) && !File.ReadAllText(launcherSrc).Contains("privateNode"))
@@ -501,21 +504,29 @@ sealed class Installer
             foreach (var e in z.Entries) { int i = e.FullName.IndexOf('/'); if (i > 0) { top = e.FullName.Substring(0, i + 1); break; } }
             if (top == null) throw new InstallException("The download is not the zip GitHub normally sends.");
 
-            string[] include = DefaultInclude, exclude = DefaultExclude, keep = DefaultKeep;
+            string[] include = DefaultInclude, exclude = DefaultExclude, keep = DefaultKeep, required = new string[0];
             var manifest = z.GetEntry(top + "install.json");
             if (manifest != null)
             {
                 using (var rd = new StreamReader(manifest.Open(), Encoding.UTF8))
                 {
                     var j = Net.Json(rd.ReadToEnd());
-                    include = Strings(j, "include") ?? include;
+                    include = Strings(j, "include");
+                    if (include == null || include.Length == 0)
+                        throw new InstallException("install.json needs a non-empty include list. Nothing was installed.");
                     exclude = Strings(j, "exclude") ?? new string[0];
                     keep = Strings(j, "keep") ?? new string[0];
                     preserve = Strings(j, "preserve") ?? DefaultPreserve;
+                    required = Strings(j, "required") ?? required;
                 }
                 Log.Say("install.json: " + include.Length + " entries");
             }
             else Log.Say("no install.json in this repository; using the built-in list");
+
+            foreach (string inc in include)
+                if (inc == "." || inc == ".." || inc.IndexOfAny(new[] { '/', '\\', ':' }) >= 0)
+                    throw new InstallException("install.json include entries must be top-level app files or folders. Nothing was installed.");
+            foreach (string rel in preserve) PayloadPath(stage, rel);
 
             string root = Path.GetFullPath(stage) + "\\";
             int count = 0, seen = 0, total = z.Entries.Count;
@@ -539,6 +550,14 @@ sealed class Installer
             }
             if (!File.Exists(Path.Combine(stage, @"launcher\launcher.mjs")))
                 throw new InstallException("The download does not contain the launcher. The repository may have moved it; nothing was installed.");
+            foreach (string rel in required)
+                if (!File.Exists(PayloadPath(stage, rel)))
+                    throw new InstallException("The download is incomplete: " + rel + " is missing. Nothing was installed. Download the newest Setup and try again.");
+            // A repository that supplies its own validator must actually ship it,
+            // even if its manifest accidentally forgot to list it as required.
+            const string check = "scripts/verify-install.mjs";
+            if (z.GetEntry(top + check) != null && !File.Exists(PayloadPath(stage, check)))
+                throw new InstallException("The download omitted " + check + ". Nothing was installed.");
             return count;
         }
     }
@@ -546,10 +565,64 @@ sealed class Installer
     static string[] Strings(Dictionary<string, object> j, string key)
     {
         object v;
-        if (!j.TryGetValue(key, out v) || !(v is System.Collections.IList)) return null;
+        if (!j.TryGetValue(key, out v)) return null;
+        if (!(v is System.Collections.IList))
+            throw new InstallException("install.json " + key + " must be an array of strings. Nothing was installed.");
         var list = new List<string>();
-        foreach (var o in (System.Collections.IList)v) if (o is string) list.Add((string)o);
+        foreach (var o in (System.Collections.IList)v)
+        {
+            if (!(o is string) || string.IsNullOrWhiteSpace((string)o))
+                throw new InstallException("install.json " + key + " must contain non-empty strings. Nothing was installed.");
+            list.Add((string)o);
+        }
         return list.ToArray();
+    }
+
+    static string PayloadPath(string stage, string rel)
+    {
+        string root = Path.GetFullPath(stage).TrimEnd('\\') + "\\";
+        string target = Path.GetFullPath(Path.Combine(stage, rel.Replace('/', '\\')));
+        if (Path.IsPathRooted(rel) || rel.Contains(":") || !target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new InstallException("install.json contains an invalid app path: " + rel + ". Nothing was installed.");
+        return target;
+    }
+
+    void ValidatePayload(string nodeExe, string stage)
+    {
+        string checker = Path.Combine(stage, @"scripts\verify-install.mjs");
+        if (!File.Exists(checker)) return; // Older supported repositories predate the validator.
+        Detail("Checking Studio's startup files");
+        var psi = new ProcessStartInfo(nodeExe, "--experimental-vm-modules \"" + checker + "\" --root \"" + stage + "\"");
+        psi.WorkingDirectory = stage;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        var lines = new StringBuilder();
+        using (var p = new Process())
+        {
+            p.StartInfo = psi;
+            DataReceivedEventHandler line = (s, e) => {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    Log.Say("files: " + e.Data);
+                    lock (lines) if (lines.Length < 8192) lines.AppendLine(e.Data);
+                }
+            };
+            p.OutputDataReceived += line;
+            p.ErrorDataReceived += line;
+            p.Start();
+            p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
+            if (!p.WaitForExit(60000))
+            {
+                try { p.Kill(); } catch { }
+                throw new InstallException("The startup-file check did not finish. Nothing was installed.");
+            }
+            p.WaitForExit();
+            if (p.ExitCode != 0)
+                throw new InstallException("Studio's startup files are incomplete. Nothing was installed. Download the newest Setup and try again.\n" + lines.ToString().Trim());
+        }
     }
 
     static bool Matches(string name, string[] patterns)

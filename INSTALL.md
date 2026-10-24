@@ -60,6 +60,18 @@ not a certified minimum; 6 GB and 8 GB cards have not been validated. Use the
 controls, source pins, licences and troubleshooting. Model/runtime downloads
 require your action; no Python packages are installed by this path.
 
+### If the launcher says a `shared` module is missing
+
+Download the newest **Setup.exe** from the link above, close Studio, and install
+into the same folder. Setup 1.2 could omit `shared` and `worker` even when the
+installed app showed the newest build. This is an installer problem; reinstalling
+Python or downloading the models again will not fix it.
+
+Setup 1.4 checks required files and parses the startup imports before replacing
+the app. Reinstalling keeps settings, songs and models in `.aiplay-studio`, plus
+custom workflows and the preserved Blender toolkit. If the launcher opens,
+**Update** can also repair an incomplete install at the same app version.
+
 ## The full Studio installation
 
 The rest of this guide describes the original, ComfyUI-backed full suite. Its

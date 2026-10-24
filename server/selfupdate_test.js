@@ -298,3 +298,72 @@ test("a ZIP with no recorded commit does not invent an ancestry requirement", as
     assert.ok(!asked.some(u => u.includes("/compare/")));
   } finally { globalThis.fetch = real; await rm(base, { recursive: true, force: true }); }
 });
+
+async function runtimeFixture(t, { sameCommit = true, missingInstalled = null, missingFresh = null, malformedFresh = false, exclude = [], omitIncluded = null } = {}) {
+  const base = await mkdtemp(path.join(tmpdir(), "aiplay-runtime-repair-"));
+  const app = path.join(base, "app"), src = path.join(base, "src", "Studio-runtime");
+  const sha = "abcdef0123456789abcdef0123456789abcdef01", old = sameCommit ? sha : "1111111111111111111111111111111111111111";
+  const manifest = { include: ["server","launcher","worker","shared","scripts","workflows","install.json","package.json","package-lock.json"],
+    required: ["install.json","server/index.js","launcher/launcher.mjs","worker/runpod-worker.js","shared/model-profiles.js","scripts/verify-install.mjs"],
+    exclude, keep: [], preserve: ["workflows/custom"] };
+  if (omitIncluded) manifest.include = manifest.include.filter(name => name !== omitIncluded);
+  const payload = {
+    "package.json": '{"name":"aiplay-runtime-fixture","type":"module"}', "package-lock.json": "{}",
+    "install.json": JSON.stringify(manifest),
+    "server/index.js": "import { value } from '../shared/model-profiles.js'; throw Error('app modules must never execute during validation');",
+    "launcher/launcher.mjs": "import '../server/index.js';",
+    "worker/runpod-worker.js": "import '../shared/model-profiles.js';",
+    "shared/model-profiles.js": "export const value = 1;",
+    "scripts/verify-install.mjs": await readFile(new URL("../scripts/verify-install.mjs", import.meta.url), "utf8"),
+    "workflows/base.json": "{}",
+  };
+  const installed = { ...payload, "server/version.gen.json": JSON.stringify({ commit: old.slice(0,7) }),
+    "install-info.json": JSON.stringify({ repo: "Senzube4n/AIPLAY-Studio", commit: old }),
+    "node/node.exe": "private Node", "node_modules/ws/index.js": "private dependency", "workflows/custom/mine.json": "my workflow" };
+  if (missingInstalled) delete installed[missingInstalled];
+  const fresh = { ...payload };
+  if (missingFresh) delete fresh[missingFresh];
+  if (malformedFresh) fresh["install.json"] = "{broken manifest";
+  await files(app, installed); await files(src, fresh);
+  const archive = path.join(base, "runtime.zip");
+  execFileSync(winTar, ["-a","-c","-f",archive,"-C",path.dirname(src),path.basename(src)]);
+  const real = globalThis.fetch, asked = [];
+  globalThis.fetch = async input => {
+    const url = String(input); asked.push(url);
+    if (url.includes("/commits/main")) return { ok: true, json: async () => ({ sha, commit: {} }) };
+    if (url.includes("/compare/")) return { ok: true, json: async () => ({ status: "ahead", ahead_by: 1, behind_by: 0 }) };
+    assert.equal(url, `https://codeload.github.com/Senzube4n/AIPLAY-Studio/zip/${sha}`);
+    return new Response(readFileSync(archive));
+  };
+  t.after(async () => { globalThis.fetch = real; await rm(base, { recursive: true, force: true }); });
+  return { app, asked, sha, installed };
+}
+
+test("same-commit Update repairs a missing static dependency or validator and keeps personal files", { skip: !canZip }, async t => {
+  for (const missingInstalled of ["shared/model-profiles.js", "scripts/verify-install.mjs"]) await t.test(missingInstalled, async t => {
+    const { app, asked, sha } = await runtimeFixture(t, { missingInstalled });
+    const first = await selfUpdate({ root: app });
+    assert.equal(first.ok, true, first.line); assert.equal(first.changed, true); assert.match(first.line, /Repaired runtime files/);
+    assert.equal(await readFile(path.join(app,"shared/model-profiles.js"),"utf8"), "export const value = 1;");
+    assert.ok(existsSync(path.join(app,"scripts/verify-install.mjs")));
+    assert.equal(await readFile(path.join(app,"workflows/custom/mine.json"),"utf8"), "my workflow");
+    assert.equal(await readFile(path.join(app,"node/node.exe"),"utf8"), "private Node");
+    assert.equal(await readFile(path.join(app,"node_modules/ws/index.js"),"utf8"), "private dependency");
+    assert.equal(JSON.parse(await readFile(path.join(app,"install-info.json"),"utf8")).commit, sha);
+    assert.equal(asked.filter(url=>url.includes("codeload.github.com")).length, 1);
+    const second = await selfUpdate({ root: app });
+    assert.equal(second.ok, true, second.line); assert.equal(second.changed, false); assert.equal(second.line, "Already up to date.");
+    assert.equal(asked.filter(url=>url.includes("codeload.github.com")).length, 1, "healthy same commit does not download again");
+  });
+});
+
+test("an invalid downloaded runtime or manifest is rejected before changing any old app file", { skip: !canZip }, async t => {
+  for (const options of [{ missingFresh:"shared/model-profiles.js" }, { missingFresh:"scripts/verify-install.mjs" },
+    { malformedFresh:true }, { exclude:["model-profiles.js"] }, { omitIncluded:"shared" }]) await t.test(JSON.stringify(options), async t => {
+    const { app, installed } = await runtimeFixture(t, { sameCommit:false, ...options });
+    const result = await selfUpdate({ root: app });
+    assert.equal(result.ok, false); assert.equal(result.changed, false); assert.match(result.line, /validation|validator|manifest/);
+    for (const [file, bytes] of Object.entries(installed)) assert.equal(await readFile(path.join(app,file),"utf8"), bytes, file);
+    assert.ok(!(await fsPromises.readdir(app)).some(name=>name.includes(".old-")), "validation finishes before any backup/swap starts");
+  });
+});

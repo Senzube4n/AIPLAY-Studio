@@ -324,6 +324,9 @@ static class Fixture {
     Console.WriteLine("manifest array runtime type: " + manifest["include"].GetType().FullName);
     using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create)) {
       Entry(zip, "install.json", File.ReadAllText(args[1]));
+      foreach (string required in (System.Collections.IList)manifest["required"])
+        if (required != "install.json" && required != "launcher/launcher.mjs" && required != "shared/model-bundles.js"
+          && required != "worker/runpod-worker.js") Entry(zip, required, "fixture payload");
       Entry(zip, "launcher/launcher.mjs", "launcher");
       Entry(zip, "worker/runpod-worker.js", "worker");
       Entry(zip, "shared/model-bundles.js", "shared models");
@@ -353,6 +356,48 @@ static class Fixture {
       throw new Exception("Real install.json arrays must include worker/shared, exclude tests and notes, and keep licences");
     if (Array.IndexOf(preserved, "vendor/previz-blender") < 0)
       throw new Exception("Manifest preservation paths must survive JSON deserialization");
+    // Real extraction must reject malformed manifests and required files that
+    // were omitted, instead of silently reverting to an outdated include list.
+    int rejected = 0;
+    foreach (string bad in new[] {
+      "{\\\"include\\\":false}",
+      "{\\\"include\\\":[\\\"launcher\\\",42]}",
+      "{\\\"include\\\":[\\\"launcher\\\"],\\\"required\\\":[\\\"shared/model-profiles.js\\\"]}",
+      "{\\\"include\\\":[\\\"launcher\\\"],\\\"required\\\":[\\\"../outside.js\\\"]}",
+      "{\\\"include\\\":[\\\"../server\\\"]}"
+    }) {
+      string invalidZip = Path.Combine(root, "invalid-" + rejected + ".zip");
+      using (var zip = ZipFile.Open(invalidZip, ZipArchiveMode.Create)) {
+        Entry(zip, "install.json", bad);
+        Entry(zip, "launcher/launcher.mjs", "export {};");
+      }
+      bool invalid = false;
+      try { typeof(Installer).GetMethod("Unpack", BindingFlags.Instance | BindingFlags.NonPublic)
+        .Invoke(unpacker, new object[] { invalidZip, Path.Combine(root, "invalid-stage-" + rejected) }); }
+      catch (TargetInvocationException e) { invalid = e.InnerException is InstallException; }
+      if (!invalid) throw new Exception("An invalid/incomplete manifest must stop extraction");
+      rejected++;
+    }
+    // Exercise the actual installer -> Node validator boundary, without booting
+    // Studio, npm, an engine or the installer's network entry point.
+    string checkedStage = Path.Combine(root, "checked stage");
+    Directory.CreateDirectory(Path.Combine(checkedStage, "scripts"));
+    Directory.CreateDirectory(Path.Combine(checkedStage, "server"));
+    Directory.CreateDirectory(Path.Combine(checkedStage, "launcher"));
+    File.Copy(args[3], Path.Combine(checkedStage, "scripts", "verify-install.mjs"));
+    File.WriteAllText(Path.Combine(checkedStage, "install.json"), "{\\\"include\\\":[\\\"server\\\",\\\"launcher\\\",\\\"shared\\\"]}");
+    File.WriteAllText(Path.Combine(checkedStage, "package.json"), "{\\\"type\\\":\\\"module\\\"}");
+    File.WriteAllText(Path.Combine(checkedStage, "launcher", "launcher.mjs"), "export {};");
+    File.WriteAllText(Path.Combine(checkedStage, "server", "index.js"), "import '../shared/model-profiles.js'; throw new Error('must never execute');");
+    var validator = typeof(Installer).GetMethod("ValidatePayload", BindingFlags.Instance | BindingFlags.NonPublic);
+    bool missingStopped = false;
+    try { validator.Invoke(unpacker, new object[] { args[2], checkedStage }); }
+    catch (TargetInvocationException e) { missingStopped = e.InnerException is InstallException && e.InnerException.Message.Contains("model-profiles.js"); }
+    if (!missingStopped) throw new Exception("Missing imported shared module must prevent finishing the install");
+    Directory.CreateDirectory(Path.Combine(checkedStage, "shared"));
+    File.WriteAllText(Path.Combine(checkedStage, "shared", "model-profiles.js"), "export {};");
+    validator.Invoke(unpacker, new object[] { args[2], checkedStage });
+    Console.WriteLine("malformed manifests refused; missing startup import refused; valid modules parsed without execution");
     Directory.CreateDirectory(Path.Combine(app, "launcher"));
     File.WriteAllText(Path.Combine(app, "launcher", "launcher.mjs"), "old app");
     File.WriteAllText(Path.Combine(app, ".git"), "gitdir: elsewhere");
@@ -378,8 +423,10 @@ static class Fixture {
       "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
       ...["System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll", "System.Web.Extensions.dll"].map(d => `/r:${path.join(fw, d)}`),
       fileURLToPath(root("installer/Setup.cs")), harness], { windowsHide: true, stdio: "pipe" });
-    const output = execFileSync(exe, [base, fileURLToPath(root('install.json'))], { windowsHide: true, encoding: "utf8" });
+    const output = execFileSync(exe, [base, fileURLToPath(root('install.json')), process.execPath,
+      fileURLToPath(root('scripts/verify-install.mjs'))], { windowsHide: true, encoding: "utf8" });
     assert.match(output, /original first; both builds selectable; manifest honoured/);
     assert.match(output, /worktree refused; failed preservation restored old install/);
+    assert.match(output, /malformed manifests refused; missing startup import refused; valid modules parsed without execution/);
   } finally { await rm(base, { recursive: true, force: true }); }
 });

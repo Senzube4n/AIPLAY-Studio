@@ -1,5 +1,5 @@
 {
-  "about": "What AIPLAY Studio Setup.exe unpacks from this repository's main branch. Everything else in the repository (docs, examples, the website's banners, notes) never reaches an install. Add a line here when a new top-level folder or file is needed at run time; the installer reads this file from the zip it downloads, so it never has to be rebuilt for it. `preserve` names folders in the app that hold the person's own files (custom workflows, a clone of the GPL Blender toolkit): a reinstall or an update copies them across instead of replacing them.",
+  "about": "What AIPLAY Studio Setup.exe unpacks from this repository's main branch. Everything else in the repository (docs, examples, the website's banners, notes) never reaches an install. Add a line here when a new top-level folder or file is needed at run time; the installer reads this file from the zip it downloads, so it never has to be rebuilt for it. `required` lists files that must survive filtering; the runtime validator also follows relative static startup imports. `preserve` names folders in the app that hold the person's own files (custom workflows, a clone of the GPL Blender toolkit): a reinstall or an update copies them across instead of replacing them.",
   "include": [
     "server",
     "web",
@@ -8,12 +8,28 @@
     "scripts",
     "worker",
     "shared",
+    "install.json",
     "package.json",
     "package-lock.json",
     "AIPLAY Studio.exe",
     "AIPLAY Studio.cmd",
     "LICENSE",
     "NOTICE"
+  ],
+  "required": [
+    "install.json",
+    "package.json",
+    "package-lock.json",
+    "AIPLAY Studio.exe",
+    "AIPLAY Studio.cmd",
+    "launcher/launcher.mjs",
+    "server/index.js",
+    "server/config.js",
+    "web/index.html",
+    "worker/runpod-worker.js",
+    "shared/model-profiles.js",
+    "shared/model-bundles.js",
+    "scripts/verify-install.mjs"
   ],
   "exclude": [
     "*.md",

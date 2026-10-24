@@ -35,7 +35,11 @@ that file, publishing the new installer is part of finishing the work:
    (certificate thumbprint) before step 2, or run the `signtool` command step 2
    prints. Never commit a certificate, a `.pfx` or a password. An unsigned
    installer still works, but Windows SmartScreen warns about it.
-4. **Commit and push** the source change as usual.
+4. **Commit and push** the source change as usual. The normal gate includes
+   `server/installer_test.js` (the compiled C# unpacker and its Node validator)
+   and `server/install-payload_test.js` (the staged startup import graph). Keep
+   these registered: a source checkout containing a file does not prove that
+   the installer ships it.
 5. **Publish the release** to this clone's own repository (`origin`):
 
    ```bash
@@ -54,6 +58,14 @@ that file, publishing the new installer is part of finishing the work:
 Each repository publishes its own copy. Both copies install either build: the
 installer shows Senzu's build (the original) and Bucky's, with how far apart they
 are, and the person picks.
+
+`install.json` ships inside the app. Its `required` paths must survive filtering;
+`scripts/verify-install.mjs` additionally parses the launcher's, server's and
+worker's relative static imports without evaluating them. Setup, ZIP packaging
+and ZIP updates check the staged payload before replacing an existing install.
+The checker needs Node's `--experimental-vm-modules` flag, supplied by each
+caller. It does not check optional dynamic imports, installed models or engine
+readiness.
 
 **Don't release** for a change to anything else, including `install.json`: the
 installer reads that from the zip it downloads, so a push is enough.

@@ -12,27 +12,18 @@
  * wants to download 34 GB of model weights deserves more suspicion than it can
  * answer, and a zip can be read before it is run.
  */
-import { cp, mkdir, rm, readdir, stat, writeFile, readFile } from "node:fs/promises";
+import { cp, mkdir, rm, readdir, stat, lstat, writeFile, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stampForPackage, versionLine } from "../server/version.js";
+import { installPathAllowed } from "./verify-install.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "dist");
 
-/** Whole directories that ship as-is. */
-const DIRS = ["server", "web", "workflows", "launcher"];
-
-/** Individual files at the root. */
-const FILES = ["package.json", "package-lock.json", "AIPLAY Studio.cmd", "README.md", "LICENSE",
-  // Not an installer: a windowless front door for launcher/launcher.mjs that
-  // downloads nothing. Built from launcher/exe/AiplayLauncher.cs by
-  // scripts/build-launcher-exe.mjs; the .cmd beside it does the same readably.
-  "AIPLAY Studio.exe"];
-// LICENSE is listed but deliberately NOT yet written. Choosing one is the
-// owner's call and it is irrevocable for whatever version ships under it, so
-// the packager warns about the absence rather than inventing an answer.
+// Runtime folders/files come from install.json, the same manifest as Setup.exe.
+// Scripts remain separately reviewed below so a new dev harness cannot ship.
 
 /**
  * Scripts that ship. Named one by one on purpose.
@@ -48,6 +39,8 @@ const SCRIPTS = [
   // was missing here, so a zip could only ever start Full Studio.
   "start-music.mjs",        // Music only
   "start-cloud.mjs",        // Use Comfy API
+  "start-remote.mjs",       // RunPod GPU
+  "verify-install.mjs",     // offline runtime payload validation
   "install-engine.mjs",     // the launcher's "Install ComfyUI"
   "build-launcher-exe.mjs", // rebuild AIPLAY Studio.exe + launcher/aiplay.ico from source
   "dav_encode.py",          // audio reference: the encode ComfyUI refuses to do
@@ -99,28 +92,65 @@ async function walk(dir, base = dir) {
   return out;
 }
 
+/** Stage the manifest-selected payload without running it or touching dist. */
+export async function stageInstallPayload({ root, stage }) {
+  const manifest = JSON.parse(await readFile(path.join(root, "install.json"), "utf8"));
+  if (!Array.isArray(manifest.include) || !manifest.include.length
+    || manifest.include.some(name => typeof name !== "string" || !name || /[\\/:*?"<>|\x00-\x1f]/.test(name) || name === "." || name === "..")) {
+    throw new Error("install.json must name safe top-level payload files and folders.");
+  }
+  await mkdir(stage, { recursive: true });
+  if ((await readdir(stage)).length) throw new Error("Package staging must start in an empty folder.");
+  const missing = [];
+  const filter = async file => {
+    const relative = path.relative(root, file).split(path.sep).join("/");
+    if (!installPathAllowed(relative, manifest)) return false;
+    if ((await lstat(file)).isSymbolicLink()) throw new Error(`Linked payload paths cannot ship: ${relative}`);
+    return true;
+  };
+  for (const entry of manifest.include) {
+    if (entry === "scripts") {
+      await mkdir(path.join(stage, "scripts"), { recursive: true });
+      for (const script of SCRIPTS) {
+        const source = path.join(root, "scripts", script);
+        if (await exists(source)) await cp(source, path.join(stage, "scripts", script), { filter });
+        else missing.push("scripts/" + script);
+      }
+      continue;
+    }
+    const source = path.join(root, entry);
+    if (await exists(source)) await cp(source, path.join(stage, entry), { recursive: true, filter });
+    else missing.push(entry);
+  }
+  return { manifest, missing };
+}
+
+async function validateStage(stage) {
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--experimental-vm-modules", path.join(stage, "scripts", "verify-install.mjs"), "--root", stage], { windowsHide: true });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", data => { stdout += data; });
+    child.stderr.on("data", data => { stderr += data; });
+    child.on("error", reject);
+    child.on("close", code => {
+      try { resolve({ code, report: JSON.parse(stdout) }); }
+      catch { reject(new Error("The staged payload checker did not return JSON: " + stderr.slice(-400))); }
+    });
+  });
+  if (result.code !== 0 || result.report.ok !== true) {
+    throw new Error("Incomplete runtime payload: " + (result.report.errors || []).map(error => error.message).join("; "));
+  }
+  console.log(`  verified ${result.report.modulesChecked} local startup modules without executing them`);
+}
+
 async function main() {
   const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf-8"));
   const stage = path.join(OUT, `aiplay-studio-${pkg.version}`);
+  if (path.relative(path.resolve(ROOT), path.resolve(OUT)) !== "dist") throw new Error("Package output escaped its expected dist folder.");
   await rm(OUT, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
 
-  for (const d of DIRS) {
-    if (await exists(path.join(ROOT, d))) {
-      await cp(path.join(ROOT, d), path.join(stage, d), { recursive: true });
-    }
-  }
-  await mkdir(path.join(stage, "scripts"), { recursive: true });
-  const missing = [];
-  for (const s of SCRIPTS) {
-    if (await exists(path.join(ROOT, "scripts", s))) {
-      await cp(path.join(ROOT, "scripts", s), path.join(stage, "scripts", s));
-    } else missing.push(s);
-  }
-  for (const f of FILES) {
-    if (await exists(path.join(ROOT, f))) await cp(path.join(ROOT, f), path.join(stage, f));
-    else missing.push(f);
-  }
+  const { missing } = await stageInstallPayload({ root: ROOT, stage });
 
   /* WHICH BUILD IS IN THE ZIP. A packaged install has no .git, so the three
    * facts server/version.js would have read from it are written here instead.
@@ -129,6 +159,7 @@ async function main() {
   await writeFile(path.join(stage, "server", "version.gen.json"), `${JSON.stringify(stampForPackage(), null, 2)}
 `);
   console.log(`  stamped ${versionLine()}`);
+  await validateStage(stage);
 
   // ---- the check that makes the allow-list trustworthy --------------------
   const shipped = await walk(stage);
@@ -174,4 +205,4 @@ async function main() {
   return 0;
 }
 
-process.exit(await main());
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(await main());
