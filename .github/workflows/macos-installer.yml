@@ -100,6 +100,8 @@ jobs:
           hdiutil detach "$mount"
           trap - EXIT
       - name: Accept fresh install, repair, real launcher and Studio startup
+        env:
+          AIPLAY_SETUP_GITHUB_TOKEN: ${{ github.token }}
         run: node --test server/macos-native-installer_test.js
       - name: Check Finder LaunchServices entry without installing another profile
         run: |
@@ -130,7 +132,11 @@ jobs:
           for name in acceptance.json removal-acceptance.json; do
             if test -f "$AIPLAY_MACOS_SMOKE_ROOT/$name"; then cp "$AIPLAY_MACOS_SMOKE_ROOT/$name" "dist/macos/$name"; fi
           done
+          for diagnostic in "$AIPLAY_MACOS_SMOKE_ROOT"/native-diagnostic-*.json; do
+            if test -f "$diagnostic"; then cp "$diagnostic" dist/macos/; fi
+          done
       - name: Upload disk image, checksums and source evidence
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-installer-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}

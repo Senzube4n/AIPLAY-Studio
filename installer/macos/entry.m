@@ -145,6 +145,7 @@ static void installTerminationSignals(void) {
     installTerminationSignals();
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)flag {
+    [self event:@"reopen-request" extra:nil];
     BOOL opened = self.lastURL && [NSWorkspace.sharedWorkspace openURL:self.lastURL];
     if (!self.lastURL && self.task.running) self.wantsReopen = YES;
     [self event:@"reopen" extra:@{ @"opened":@(opened) }];
@@ -196,7 +197,9 @@ int main(int argc, const char *argv[]) {
             return setupFailure(YES);
         }
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-        AIPLAYHost *host = [[AIPLAYHost alloc] init]; host.eventFD = -1; host.node = node; host.bootstrap = bootstrap; host.arguments = forward;
+        // NSApplication.delegate is weak; retain the host across the run loop.
+        __attribute__((objc_precise_lifetime)) AIPLAYHost *host = [[AIPLAYHost alloc] init];
+        host.eventFD = -1; host.node = node; host.bootstrap = bootstrap; host.arguments = forward;
         NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy]; environment[@"PATH"] = localPath; host.environment = environment;
         NSApp.delegate = host;
         [NSApp run];

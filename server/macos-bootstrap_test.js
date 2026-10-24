@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { defaultDataRoot, parseOptions, macosManifest, validateArchiveEntries, extractSource, installStudio, startLauncher, statusPage, probeRunning, reuseLauncher } from '../installer/macos/bootstrap.mjs';
+import { defaultDataRoot, parseOptions, macosManifest, validateArchiveEntries, extractSource, installStudio, startLauncher, statusPage, probeRunning, reuseLauncher, consumeSetupGithubToken } from '../installer/macos/bootstrap.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = 'a'.repeat(40), NEXT = 'b'.repeat(40), REPO = 'fixture/Studio';
@@ -138,6 +138,70 @@ test('streaming extraction handles Git PAX paths and rejects a malicious extende
   await writeFile(bad, archive([{ name: 'repo/pax', type: 'x', data: pax('path', '../escape') }, { name: 'repo/short', data: 'no' }]));
   await assert.rejects(extractSource(bad, badOut), /unsafe path/);
   await assert.rejects(lstat(path.join(f.home, 'escape')), { code: 'ENOENT' });
+});
+
+test('explicit setup API token is limited to metadata and ancestry, never downloads, child commands or saved state', async t => {
+  const f = await fixtures(t), token = 'github_pat_fixture_only_no_real_credential';
+  const env = { ...process.env, AIPLAY_SETUP_GITHUB_TOKEN: 'inherited_fixture_token_must_not_reach_children' };
+  const messages = [], options = { ...f.options, githubToken: token, env, say: line => messages.push(line) };
+  await installStudio(options);
+  f.setRevision(NEXT);
+  const repaired = await installStudio({ ...options, repair: true });
+  const api = f.calls.filter(call => new URL(call.url).origin === 'https://api.github.com');
+  assert.equal(api.filter(call => call.url.includes('/commits/')).length, 2);
+  assert.equal(api.filter(call => call.url.includes('/compare/')).length, 1);
+  for (const call of api) {
+    assert.equal(new Headers(call.config.headers).get('Authorization'), `Bearer ${token}`);
+    assert.equal(call.config.redirect, 'error');
+  }
+  const downloads = f.calls.filter(call => new URL(call.url).origin === 'https://codeload.github.com');
+  assert.equal(downloads.length, 2);
+  for (const call of downloads) {
+    assert.equal(new Headers(call.config.headers).get('Authorization'), null);
+    assert.equal(call.config.redirect, 'error');
+  }
+  assert.equal(f.commands.length, 4, 'both npm and the real checker ran for install and repair');
+  for (const command of f.commands) {
+    assert.equal(command.config.env.AIPLAY_SETUP_GITHUB_TOKEN, undefined);
+    assert.equal(JSON.stringify(command).includes(token), false);
+  }
+  assert.equal(env.AIPLAY_SETUP_GITHUB_TOKEN, 'inherited_fixture_token_must_not_reach_children', 'library sanitization does not mutate its caller');
+  for (const file of ['install-info.json', 'server/version.gen.json']) {
+    const saved = await readFile(path.join(repaired.app, file), 'utf8');
+    assert.equal(saved.includes(token), false);
+    assert.equal(saved.includes('AIPLAY_SETUP_GITHUB_TOKEN'), false);
+    assert.equal(saved.includes(env.AIPLAY_SETUP_GITHUB_TOKEN), false);
+  }
+  assert.equal(JSON.stringify(messages).includes(token), false);
+  assert.equal(JSON.stringify(repaired).includes(token), false);
+});
+
+test('library setup does not discover an inherited token and leaves public downloads unauthenticated', async t => {
+  const f = await fixtures(t);
+  await installStudio({ ...f.options, env: { ...process.env, AIPLAY_SETUP_GITHUB_TOKEN: 'not_an_implicit_api_credential' } });
+  for (const call of f.calls) assert.equal(new Headers(call.config.headers).get('Authorization'), null);
+  for (const command of f.commands) assert.equal(command.config.env.AIPLAY_SETUP_GITHUB_TOKEN, undefined);
+});
+
+test('CLI token consumption clears the environment and invalid tokens refuse before a fetch or setup lock', async t => {
+  const env = { AIPLAY_SETUP_GITHUB_TOKEN: 'ghs_fixture_token', KEEP_ME: 'keep' };
+  assert.equal(consumeSetupGithubToken(env), 'ghs_fixture_token');
+  assert.deepEqual(env, { KEEP_ME: 'keep' });
+  assert.equal(consumeSetupGithubToken({}), undefined);
+  assert.equal(consumeSetupGithubToken({ AIPLAY_SETUP_GITHUB_TOKEN: '' }), '');
+  const f = await fixtures(t);
+  for (const invalid of [null, 42, 'bad token', 'bad\r\nvalue', 'bad\0value', 'a'.repeat(4097), 'nonascii_é']) {
+    const ownEnv = { AIPLAY_SETUP_GITHUB_TOKEN: invalid, KEEP_ME: 'keep' };
+    assert.throws(() => consumeSetupGithubToken(ownEnv), /Invalid setup GitHub token/);
+    assert.deepEqual(ownEnv, { KEEP_ME: 'keep' }, 'even an invalid value is removed before children can inherit it');
+    await assert.rejects(installStudio({ ...f.options, githubToken: invalid }), error => {
+      assert.match(error.message, /Invalid setup GitHub token/);
+      if (typeof invalid === 'string') assert.equal(error.message.includes(invalid), false);
+      return true;
+    });
+    assert.equal(f.calls.length, 0);
+    await assert.rejects(lstat(f.dataRoot), { code: 'ENOENT' });
+  }
 });
 
 test('fresh install stages selected payload, disables lifecycle scripts, validates real imports and records exact source/hash', async t => {
@@ -304,9 +368,11 @@ test('no-open launcher handoff uses the private Node PATH and leaves settings en
   const f = await fixtures(t); const installed = await installStudio(f.options); let captured;
   const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); const output = [];
   const actual = await startLauncher(installed.app, { noOpen: true, nodePath: '/private runtime/bin/node', onOutput: (...args) => output.push(args),
+    env: { ...process.env, AIPLAY_SETUP_GITHUB_TOKEN: 'must_not_reach_the_launcher' },
     spawnFn: (...args) => { captured = args; return child; } });
   assert.equal(actual, child); assert.equal(captured[0], '/private runtime/bin/node');
   assert.equal(captured[2].env.AIPLAY_LAUNCHER_NO_WINDOW, '1');
+  assert.equal(captured[2].env.AIPLAY_SETUP_GITHUB_TOKEN, undefined);
   assert.equal(captured[2].env.AIPLAY_APPDATA, process.env.AIPLAY_APPDATA);
   assert.ok(captured[2].env.PATH.startsWith(path.dirname('/private runtime/bin/node') + path.delimiter));
   child.stdout.emit('data', Buffer.from('launcher: http://127.0.0.1:4170/\n')); assert.equal(output[0][1], false);

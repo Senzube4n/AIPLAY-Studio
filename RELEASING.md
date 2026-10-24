@@ -140,6 +140,11 @@ and keeping user files after removal of the copied app. Native runners cover
 macOS 14/26 on Apple silicon and macOS 15 on Intel. These checks do not certify
 quarantined-download approval, GPU engines or model output quality.
 
+CI acceptance supplies its temporary, contents-read GitHub token only for the
+bootstrap's metadata API requests. It is never written to disk or sent to
+codeload, and is stripped before npm, the validator and Studio launcher run.
+Ordinary public installation does not require a token or GitHub login.
+
 Require every native job to pass and verify the downloaded artifact hashes
 and metadata before publishing. Publish both `.dmg` files, their build metadata
 and combined checksums as the **pre-release** `macos-setup-v1.0` (or the next

@@ -15,6 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const SHA = /^[0-9a-f]{40}$/;
 const HEADERS = { 'User-Agent': 'AIPLAY-Studio-macOS-Setup', Accept: 'application/vnd.github+json' };
+const SETUP_TOKEN_ENV = 'AIPLAY_SETUP_GITHUB_TOKEN';
 const LIMIT = { archive: 512 * 1024 ** 2, unpacked: 2 * 1024 ** 3, file: 512 * 1024 ** 2, entries: 100_000 };
 const OMIT = ['AIPLAY Studio.exe', 'AIPLAY Studio.cmd'];
 const fail = message => { throw new Error(message); };
@@ -25,6 +26,26 @@ const safeRelative = value => typeof value === 'string' && value.length > 0 && v
   && !value.split('/').some(piece => !piece || piece === '.' || piece === '..');
 const inside = (root, file) => { const rel = path.relative(root, file); return rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel); };
 const stamp = () => `${Date.now()}-${randomBytes(6).toString('hex')}`;
+
+function githubApiHeaders(token) {
+  if (token === undefined || token === '') return { ...HEADERS };
+  if (typeof token !== 'string' || token.length > 4096 || !/^[A-Za-z0-9._~+/=-]+$/.test(token)) fail('Invalid setup GitHub token. Use a bounded token without spaces or control characters.');
+  return { ...HEADERS, Authorization: `Bearer ${token}` };
+}
+
+/** CI may explicitly supply a read-only API token. Consume it before any child
+ * can inherit the environment; it is never an installation preference. */
+export function consumeSetupGithubToken(env = process.env) {
+  const token = env[SETUP_TOKEN_ENV];
+  delete env[SETUP_TOKEN_ENV];
+  githubApiHeaders(token);
+  return token;
+}
+function childEnvironment(nodePath, env) {
+  const child = { ...env, PATH: path.dirname(nodePath) + path.delimiter + (env.PATH || '') };
+  delete child[SETUP_TOKEN_ENV];
+  return child;
+}
 
 export function defaultDataRoot(_env = process.env, home = os.homedir()) {
   if (!path.isAbsolute(home)) fail('The home folder must be absolute.');
@@ -328,7 +349,8 @@ async function download(fetchFn, url, target, expectedSha256, say) {
 export async function installStudio({ dataRoot = defaultDataRoot(), repo = DEFAULT_REPO, ref = 'main', repair = false,
   fetchFn = fetch, command = runCommand, say = () => {}, nodePath = process.execPath,
   npmCli = path.resolve(path.dirname(nodePath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  expectedArchiveSha256, transactionHook = async () => {}, runtimeCheck = probeRunning } = {}) {
+  expectedArchiveSha256, transactionHook = async () => {}, runtimeCheck = probeRunning, githubToken, env = process.env } = {}) {
+  const apiHeaders = githubApiHeaders(githubToken);
   parseOptions(['--repo', repo, '--ref', ref]);
   if (!path.isAbsolute(dataRoot)) fail('The app data folder must be absolute.');
   await mkdir(dataRoot, { recursive: true, mode: 0o700 }); await ordinary(dataRoot, true);
@@ -347,7 +369,7 @@ export async function installStudio({ dataRoot = defaultDataRoot(), repo = DEFAU
     }
     if (repair && (await runtimeCheck()).busy) fail('Close the Studio launcher and Studio before repairing this app.');
     say('Checking the Studio source…');
-    const response = await fetchFn(`https://api.github.com/repos/${repo}/commits/${ref}`, { headers: HEADERS, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+    const response = await fetchFn(`https://api.github.com/repos/${repo}/commits/${ref}`, { headers: apiHeaders, redirect: 'error', signal: AbortSignal.timeout(20_000) });
     if (!response.ok) fail(`GitHub could not resolve this build (${response.status}). Check your connection and restart setup.`);
     const text = await boundedText(response);
     let source; try { source = JSON.parse(text); } catch { fail('GitHub returned invalid build metadata.'); }
@@ -355,7 +377,7 @@ export async function installStudio({ dataRoot = defaultDataRoot(), repo = DEFAU
     if (!SHA.test(sha || '') || ref !== 'main' && sha !== ref || typeof date !== 'string' || !Number.isFinite(Date.parse(date))) fail('GitHub did not verify the requested source commit.');
     if (previous && previous.commit !== sha) {
       say('Checking that this build contains the installed app…');
-      const comparison = await fetchFn(`https://api.github.com/repos/${repo}/compare/${previous.commit}...${sha}`, { headers: HEADERS, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+      const comparison = await fetchFn(`https://api.github.com/repos/${repo}/compare/${previous.commit}...${sha}`, { headers: apiHeaders, redirect: 'error', signal: AbortSignal.timeout(20_000) });
       let relation; try { if (comparison.ok) relation = JSON.parse(await boundedText(comparison)); } catch { /* unknown ancestry never authorizes replacement */ }
       if (relation?.status !== 'ahead' || !Number.isSafeInteger(relation.ahead_by) || relation.ahead_by < 1 || relation.behind_by !== 0) fail('This source is older, diverged or could not be verified as a forward update. Your app is preserved.');
     }
@@ -384,13 +406,13 @@ export async function installStudio({ dataRoot = defaultDataRoot(), repo = DEFAU
     // Required paths are checked before executing either npm or the shipped validator.
     for (const rel of manifest.required) await ordinary(path.join(stage, ...rel.split('/')), false);
     await ordinary(npmCli, false);
-    const env = { ...process.env, PATH: path.dirname(nodePath) + path.delimiter + (process.env.PATH || ''),
+    const commandEnv = { ...childEnvironment(nodePath, env),
       npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
     say('Installing Studio packages…');
-    await command(nodePath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, env });
+    await command(nodePath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, env: commandEnv });
     say('Validating the installed runtime…');
     let checked;
-    try { checked = JSON.parse(await command(nodePath, ['--experimental-vm-modules', path.join(stage, 'scripts', 'verify-install.mjs'), '--root', stage, '--platform', 'darwin'], { cwd: stage, env, timeout: 120_000 })); }
+    try { checked = JSON.parse(await command(nodePath, ['--experimental-vm-modules', path.join(stage, 'scripts', 'verify-install.mjs'), '--root', stage, '--platform', 'darwin'], { cwd: stage, env: commandEnv, timeout: 120_000 })); }
     catch { fail('The app runtime failed validation. Your previous installation is preserved.'); }
     if (checked?.ok !== true) fail('The app runtime failed validation. Your previous installation is preserved.');
     if (repair && (await runtimeCheck()).busy) fail('Studio started during setup. Close it before repairing this app.');
@@ -415,11 +437,11 @@ export async function installStudio({ dataRoot = defaultDataRoot(), repo = DEFAU
   }
 }
 
-export async function startLauncher(app, { nodePath = process.execPath, noOpen = false, spawnFn = spawn, onOutput } = {}) {
+export async function startLauncher(app, { nodePath = process.execPath, noOpen = false, spawnFn = spawn, onOutput, env = process.env } = {}) {
   if (await exists(path.join(app, '.aiplay-update-npm-pending'))) fail('Studio has an unfinished dependency update. Run open -a "AIPLAY Studio" --args --repair before opening it.');
   await ordinary(path.join(app, 'launcher', 'launcher.mjs'), false);
   const child = spawnFn(nodePath, [path.join(app, 'launcher', 'launcher.mjs')], { cwd: app, stdio: onOutput ? ['inherit', 'pipe', 'pipe'] : 'inherit',
-    env: { ...process.env, PATH: path.dirname(nodePath) + path.delimiter + (process.env.PATH || ''), ...(noOpen ? { AIPLAY_LAUNCHER_NO_WINDOW: '1' } : {}) } });
+    env: { ...childEnvironment(nodePath, env), ...(noOpen ? { AIPLAY_LAUNCHER_NO_WINDOW: '1' } : {}) } });
   child.completion = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
   if (onOutput) { child.stdout?.on('data', chunk => onOutput(String(chunk), false)); child.stderr?.on('data', chunk => onOutput(String(chunk), true)); }
   return child;
@@ -450,6 +472,7 @@ export async function statusPage(state, { openBrowser = true, spawnFn = spawn } 
 }
 
 async function cli(args) {
+  const githubToken = consumeSetupGithubToken();
   const options = parseOptions(args);
   if (options.help) { console.log('AIPLAY Studio macOS\n  --install-only  --repair  --no-open\n  --repo owner/name  --ref main|FULL_COMMIT_SHA'); return; }
   if (process.platform !== 'darwin') fail('This package is for macOS.');
@@ -467,7 +490,7 @@ async function cli(args) {
   const page = options.installOnly ? null : await statusPage(state, { openBrowser: !options.noOpen });
   if (page) console.log(`Setup: ${page.url}`);
   try {
-    const result = await installStudio({ ...options, dataRoot, say });
+    const result = await installStudio({ ...options, dataRoot, say, githubToken });
     console.log(JSON.stringify({ ok: true, app: result.app, commit: result.commit, changed: result.changed, backup: result.backup }));
     if (!options.installOnly) {
       say('Opening the Studio launcher…');

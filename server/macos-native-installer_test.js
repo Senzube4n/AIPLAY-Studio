@@ -3,10 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile, stat, lstat, realpath, symlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, lstat, realpath, symlink, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { tmpdir } from 'node:os';
 
 const enabled = process.platform === 'darwin' && process.env.AIPLAY_MACOS_NATIVE_TEST === '1';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -50,6 +51,48 @@ function launch(command, args, env, cwd) {
   child.on('error', value => { error = value; });
   return { child, output: () => output, error: () => error };
 }
+function redactedDiagnosticText(value, limit = 2048) {
+  return String(value || '').replace(/https?:\/\/[^\s<>"']+/gi, '[URL redacted]')
+    .replace(/\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+/g, '[credential redacted]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [credential redacted]')
+    .replace(/\bAuthorization\s*:[^\r\n]*/gi, 'Authorization: [redacted]')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(-limit);
+}
+function redactedEventRows(rows) {
+  return rows.slice(-24).map(row => {
+    const result = {};
+    for (const key of ['event', 'kind']) if (typeof row?.[key] === 'string') result[key] = redactedDiagnosticText(row[key], 64);
+    for (const key of ['hostPid', 'childPid', 'childCount', 'status']) if (Number.isSafeInteger(row?.[key])) result[key] = row[key];
+    if (typeof row?.opened === 'boolean') result.opened = row.opened;
+    return result;
+  });
+}
+async function nativeDiagnostic(file, run, phase, outcome, error = null) {
+  let rows = [], eventFileBytes = 0, eventReadError = null, incompleteLastRecord = false;
+  try {
+    const info = await lstat(file);
+    assert.ok(info.isFile() && !info.isSymbolicLink() && info.size <= 64 * 1024);
+    eventFileBytes = info.size;
+    const text = await readFile(file, 'utf8');
+    const lines = text.split('\n'); incompleteLastRecord = Boolean(lines.pop());
+    for (const line of lines.filter(Boolean)) {
+      try { rows.push(JSON.parse(line)); }
+      catch { eventReadError = 'A complete native event row was not valid JSON.'; }
+    }
+  } catch (value) { eventReadError = value.code === 'ENOENT' ? 'Native event file does not exist.' : redactedDiagnosticText(value.message, 512); }
+  return { schemaVersion: 1, phase, outcome, checkedAtUtc: new Date().toISOString(),
+    commit: /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA || '') ? process.env.GITHUB_SHA : null,
+    host: { pid: run.child.pid ?? null, exitCode: run.child.exitCode, signalCode: run.child.signalCode,
+      spawnError: run.error() ? redactedDiagnosticText(run.error().message, 512) : null },
+    eventFileBytes, eventRowsRead: rows.length, incompleteLastRecord, eventReadError,
+    events: redactedEventRows(rows), outputSnippet: redactedDiagnosticText(run.output()),
+    error: error ? redactedDiagnosticText(error.message, 1024) : null };
+}
+async function saveNativeDiagnostic(root, snapshot) {
+  assert.ok(/^[a-z0-9-]{1,64}$/.test(snapshot.phase));
+  assert.ok(path.isAbsolute(root) && path.basename(root).startsWith('aiplay-macos-smoke-'));
+  await writeFile(path.join(root, `native-diagnostic-${snapshot.phase}.json`), JSON.stringify(snapshot, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+}
 async function hostEvents(file, hostPid) {
   let text;
   try {
@@ -61,7 +104,7 @@ async function hostEvents(file, hostPid) {
   lines.pop(); // A concurrent append may leave the last JSONL record incomplete.
   return lines.filter(Boolean).map(line => {
     const event = JSON.parse(line);
-    assert.ok(['child-started', 'url-ready', 'reopen', 'child-exit'].includes(event.event), 'Known native host event.');
+    assert.ok(['child-started', 'url-ready', 'reopen-request', 'reopen', 'child-exit'].includes(event.event), 'Known native host event.');
     assert.equal(event.hostPid, hostPid, 'Finder reuses the original registered application host.');
     assert.ok(Number.isSafeInteger(event.childPid) && event.childPid > 0);
     if (event.event === 'url-ready') {
@@ -73,15 +116,25 @@ async function hostEvents(file, hostPid) {
     return event;
   });
 }
-async function untilHostEvent(file, run, accept) {
-  for (let i = 0; i < 300; i++) {
-    const events = await hostEvents(file, run.child.pid);
-    if (accept(events)) return events;
-    if (run.error()) throw run.error();
-    assert.equal(run.child.exitCode, null, `Native GUI host exited early: ${run.output()}`);
-    await wait(50);
+async function untilHostEvent(file, run, accept, { root, phase }) {
+  try {
+    for (let i = 0; i < 300; i++) {
+      const events = await hostEvents(file, run.child.pid);
+      if (accept(events)) {
+        await saveNativeDiagnostic(root, await nativeDiagnostic(file, run, phase, 'observed'));
+        return events;
+      }
+      if (run.error()) throw run.error();
+      assert.equal(run.child.exitCode, null, 'Native GUI host exited early.');
+      await wait(50);
+    }
+    throw Error('The native GUI host did not record the expected Finder event.');
+  } catch (error) {
+    const snapshot = await nativeDiagnostic(file, run, phase, 'failed', error);
+    try { await saveNativeDiagnostic(root, snapshot); }
+    catch (value) { snapshot.diagnosticWriteError = redactedDiagnosticText(value.message, 512); }
+    throw Error(`${redactedDiagnosticText(error.message, 1024)} Native host diagnostic: ${JSON.stringify(snapshot)}`);
   }
-  throw Error('The native GUI host did not record the expected Finder event.');
 }
 function assertSingleNodeChild(hostPid, childPid) {
   const text = execFileSync('/bin/ps', ['-ww', '-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 5000 });
@@ -92,6 +145,50 @@ function assertSingleNodeChild(hostPid, childPid) {
   assert.equal(path.basename(children[0][3]), 'node');
   process.kill(childPid, 0);
 }
+
+test('native failure diagnostics redact URLs and credentials and bound captured output', () => {
+  const text = redactedDiagnosticText('Setup: http://127.0.0.1:1234/private-token/\n'
+    + 'https://github.com/private?token=secret\nBearer synthetic-secret\nAuthorization: synthetic-secret\n'
+    + 'github_pat_synthetic_secret ghp_synthetic_secret');
+  assert.doesNotMatch(text, /https?:\/\/|private-token|synthetic.secret|token=secret/);
+  assert.ok(text.includes('[URL redacted]') && text.includes('[credential redacted]'));
+  assert.equal(redactedDiagnosticText('a'.repeat(4096)).length, 2048);
+});
+
+test('native event diagnostics preserve only bounded lifecycle fields, never event URLs or other text', () => {
+  const rows = Array.from({ length: 30 }, (_, hostPid) => ({ event: 'reopen', kind: 'launcher', hostPid,
+    childPid: 9, childCount: 1, opened: false, status: 0, url: 'http://127.0.0.1:1234/private-token/', arbitrary: 'secret' }));
+  const safe = redactedEventRows(rows);
+  assert.equal(safe.length, 24);
+  assert.equal(safe[0].hostPid, 6);
+  assert.deepEqual(Object.keys(safe[0]).sort(), ['childCount', 'childPid', 'event', 'hostPid', 'kind', 'opened', 'status']);
+  assert.doesNotMatch(JSON.stringify(safe), /private-token|127\.0\.0\.1|arbitrary|secret/);
+});
+
+test('native diagnostic files save safe complete event rows and preserve an existing receipt', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'aiplay-macos-smoke-diagnostics-'));
+  try {
+    const file = path.join(root, 'native-entry.jsonl');
+    await writeFile(file, JSON.stringify({ event: 'reopen-request', hostPid: 123, childPid: 456, childCount: 1,
+      url: 'http://127.0.0.1:1234/private-token/', private: 'ignored' }) + '\n{"incomplete":');
+    const run = { child: { pid: 123, exitCode: null, signalCode: null }, error: () => null,
+      output: () => 'http://127.0.0.1:1234/private-token/ Bearer synthetic-secret' };
+    const snapshot = await nativeDiagnostic(file, run, 'fixture', 'failed', Error('Expected event missing.'));
+    assert.equal(snapshot.incompleteLastRecord, true);
+    assert.equal(snapshot.eventRowsRead, 1);
+    assert.equal(snapshot.events[0].event, 'reopen-request');
+    assert.doesNotMatch(JSON.stringify(snapshot), /private-token|synthetic-secret|127\.0\.0\.1|"private"/);
+    await saveNativeDiagnostic(root, snapshot);
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, 'native-diagnostic-fixture.json'), 'utf8')), snapshot);
+    await assert.rejects(saveNativeDiagnostic(root, snapshot), { code: 'EEXIST' });
+    const rows = await hostEvents(file, 123);
+    assert.equal(rows[0].event, 'reopen-request');
+  } finally {
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(tmpdir()));
+    assert.ok(path.basename(root).startsWith('aiplay-macos-smoke-diagnostics-'));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('actual macOS app installs, repairs, launches and preserves user data', {
   skip: !enabled && 'requires the explicit disposable macOS bundle workflow', timeout: 12 * 60_000,
@@ -176,7 +273,7 @@ test('actual macOS app installs, repairs, launches and preserves user data', {
     const ping = await until(`http://127.0.0.1:${port}/api/ping`, gui);
     assert.equal((await ping.json()).app, 'aiplay-launcher');
     let events = await untilHostEvent(eventFile, gui,
-      rows => rows.some(row => row.event === 'url-ready' && row.kind === 'launcher'));
+      rows => rows.some(row => row.event === 'url-ready' && row.kind === 'launcher'), { root: smoke, phase: 'gui-ready' });
     assert.ok(events.some(row => row.event === 'url-ready' && row.kind === 'launcher'
       && new URL(row.url).port === String(port) && new URL(row.url).pathname === '/'), 'GUI host captured this fixture launcher.');
     const started = events.filter(row => row.event === 'child-started');
@@ -188,7 +285,7 @@ test('actual macOS app installs, repairs, launches and preserves user data', {
       const before = events.filter(row => row.event === 'reopen').length;
       execFileSync('/usr/bin/open', [bundle], { env, encoding: 'utf8', timeout: 15000 });
       events = await untilHostEvent(eventFile, gui, rows => rows.filter(row => row.event === 'reopen').slice(before)
-        .some(row => row.opened === true));
+        .some(row => row.opened === true), { root: smoke, phase: `finder-reopen-${call + 1}` });
       assert.equal(events.filter(row => row.event === 'child-started').length, 1, 'Finder reopen did not launch another bootstrap.');
       for (const event of events) {
         assert.equal(event.childPid, childPid);
@@ -204,6 +301,12 @@ test('actual macOS app installs, repairs, launches and preserves user data', {
     assert.equal(await readFile(path.join(profile, 'keep-project.txt'), 'utf8'), 'My existing project and media stay here.\n');
     assert.equal(await readFile(custom, 'utf8'), '{"myWorkflow":true}\n');
     guiReopen = { ok: true, calls: 2, childStarts: 1, hostPid: gui.child.pid, childPid };
+    await saveNativeDiagnostic(smoke, await nativeDiagnostic(eventFile, gui, 'gui-complete', 'observed'));
+  } catch (error) {
+    const snapshot = await nativeDiagnostic(eventFile, gui, 'gui-failure', 'failed', error);
+    try { await saveNativeDiagnostic(smoke, snapshot); }
+    catch (value) { snapshot.diagnosticWriteError = redactedDiagnosticText(value.message, 512); }
+    throw Error(`${redactedDiagnosticText(error.message, 2048)} GUI diagnostic: ${JSON.stringify(snapshot)}`);
   } finally { await stopOwned(gui.child); }
 
   // Actual installed Studio/DAW CPU startup, without an engine or model job.
