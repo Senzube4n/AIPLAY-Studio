@@ -131,6 +131,7 @@ footer a{color:var(--faint)}
      account or credits; optional hosted services use your own key and may charge.</p>
   <div class="cta">
     <a class="btn pri" href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe">Download for Windows</a>
+    <a class="btn" href="#updates">Current updates</a>
     <a class="btn" href="#music-editing">Shape your track</a>
     <a class="btn" href="#make">What you can make</a>
     <a class="btn" href="#native-yue2">Music-only start</a>
@@ -158,6 +159,42 @@ footer a{color:var(--faint)}
   </figure>
 
 </header>
+</div>
+
+<div class="wrap">
+<section id="updates">
+  <div class="eyebrow">Current updates</div>
+  <h2>New image recipes. Updated reference clips.</h2>
+  <p class="lede">Choose optional MOSS presets, try the latest H3 reference adapter
+     and keep favourite video takes. Models download only when you ask.</p>
+  <div class="cards">
+    <div class="card"><span class="ico">▦</span><h3>MOSS-Image choices</h3>
+      <p>Choose Standard, Spectrum or 4/8-step presets, try the Kromoss fine-tune,
+         or generate directly at 2048 × 2048 with optional HiRes v0.3.
+         Standard remains MOSS's default; Qwen is the automatic picture choice
+         and the reference/editing engine.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MOSS_IMAGE.md">MOSS guide</a> ·
+        <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MOSS_SPECTRUM_SETUP.md">Spectrum setup</a> ·
+        <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MOSS_KROMOSS_HIRES.md">Kromoss and HiRes</a></span></div>
+    <div class="card"><span class="ico">▶</span><h3>H3 REF2V Turbo V1.1</h3>
+      <p>Eight-step reference renders prefer V1.1 when installed, with V1.0 as fallback.
+         One matched Singularity V2 pair used 5.276% less running time:
+         260.611 s to 246.861 s. The sampled result changed more of the reference scene.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/H3_REF_TURBO.md">Recipe, timings and comparison limits</a></span></div>
+    <div class="card"><span class="ico">☆</span><h3>Keep takes. Guide setup.</h3>
+      <p>Star saved video clips and filter to Starred through the UI or MCP.
+         For optional LTX 2.5, sign in with Hugging Face in the browser, check
+         publisher access and approve the install. Read tokens remain available.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/LOCAL_MODEL_SETUP.md">Guided model access</a> · publisher terms still apply</span></div>
+  </div>
+  <p class="note"><strong>Measured image examples:</strong> at 1024 × 1024 on an RTX 4070 Ti SUPER 16 GB,
+    resident-model means over two new prompts were Standard <strong>16.920 s</strong>,
+    Spectrum H1 <strong>12.375 s</strong> and Turbo 4 <strong>4.988 s</strong>.
+    Different recipes can change detail and composition. The H3 pair above used
+    <strong>1344 × 768, 124 frames at 24 fps and eight steps</strong>, also on an RTX 4070 Ti SUPER 16 GB,
+    with the same Singularity V2 runtime for both adapters.
+    These small comparisons do not establish performance on other hardware or a general quality winner.</p>
+</section>
 </div>
 
 <div class="wrap">
@@ -415,15 +452,16 @@ footer a{color:var(--faint)}
 
     <div class="card"><span class="ico">▦</span>
       <h3>Covers, layers and vectors</h3>
-      <p>Generate cover art, edit layers, masks, selections and text, or turn a raster into SVG.
+      <p>Generate text-to-image art with MOSS presets, use Qwen for references and edits,
+         edit layers, masks, selections and text, or turn a raster into SVG.
          Review detail crops and clean selected geometry through the same UI and MCP workflow.</p>
-      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md">Vector workflow</a> · Qwen · FLUX · other installed engines</span></div>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md">Vector workflow</a> · MOSS · Qwen · other installed engines</span></div>
 
     <div class="card"><span class="ico">▶</span>
       <h3>Video clips</h3>
       <p>Generate clips from text or pictures, then use supported continuation and control routes
-         to develop the shot. Pick the engine and render settings for your machine.</p>
-      <span class="who">MiniMax H3 · LTX 2.5 · WAN VACE</span></div>
+         to develop the shot. Star favourite takes and filter the library to keep them in view.</p>
+      <span class="who">MiniMax H3 · REF2V Turbo V1.1 · LTX 2.5 · WAN VACE</span></div>
 
     <div class="card"><span class="ico">✂</span>
       <h3>Videos and episodes</h3>
@@ -565,6 +603,11 @@ footer a{color:var(--faint)}
      AIPLAY Studio Setup.exe</a> and run it. It installs Studio, plus a private Node.js 20+ when this PC has none, with no
      admin prompt. Windows may say “Windows protected your PC” because the installer is not signed yet: click
      <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+  <p class="note"><strong>Current Windows installer: Setup 1.4.</strong> Download a fresh copy from that link.
+    It checks required files and startup imports before replacing the app. If an older installer
+    left a <code>shared</code> module missing, close Studio and reinstall into the same folder;
+    settings, songs and models are kept.
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/INSTALL.md#if-the-launcher-says-a-shared-module-is-missing">Repair guide</a>.</p>
   <p><strong>Same public GitHub, two local launch modes.</strong> YuE2 music-only is part of AIPLAY Studio,
      not a separate repository. You download the app, then only the models you choose.</p>
   <p>Setup offers <strong>Senzu’s build</strong> (the original) and <strong>Bucky’s</strong>.</p>

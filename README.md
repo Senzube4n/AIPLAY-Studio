@@ -30,6 +30,11 @@
   Windows may say “Windows protected your PC” because the installer is not signed yet: click <b>More info</b>, then <b>Run anyway</b>.
 </p>
 
+**Windows Setup 1.4:** download a fresh copy from the button above. It checks
+required files and startup imports before replacing an install. If an older
+installer left a `shared` module missing, reinstall into the same folder;
+settings, songs and models are kept. [Repair guide](INSTALL.md#if-the-launcher-says-a-shared-module-is-missing).
+
 <p align="center">
   Runs on <b>NVIDIA</b>, <b>AMD</b>, <b>Intel Arc</b> or just your <b>CPU</b>.
 </p>
@@ -45,6 +50,34 @@ Local generation needs no Studio account or per-render credits. Optional hosted
 engines and API assistants send the inputs they need to your chosen provider;
 paid services use your own key. Software is Apache-2.0. Each model has its own
 licence, shown before installation.
+
+## Current updates
+
+- **MOSS-Image recipes:** Standard, optional Spectrum and 4/8-step presets,
+  Kromoss, and direct 2048 × 2048 HiRes generation. This is a text-to-image
+  path; Standard remains MOSS's default. Qwen Image 2.1 remains the automatic
+  picture choice and the reference/editing engine.
+  [MOSS guide](docs/MOSS_IMAGE.md) · [Spectrum setup](docs/MOSS_SPECTRUM_SETUP.md) ·
+  [Kromoss and HiRes](docs/MOSS_KROMOSS_HIRES.md).
+- **H3 REF2V Turbo V1.1:** eight-step reference renders prefer V1.1 when
+  installed, with V1.0 as fallback. In one matched Singularity V2 comparison on
+  an RTX 4070 Ti SUPER 16 GB at 1344 × 768, 124 frames at 24 fps and eight steps,
+  running time fell from
+  **260.611 s to 246.861 s (5.276%)**. The sampled result changed more of the
+  reference scene; this is one pair, not a general speed or quality ranking.
+  [Recipe and comparison](docs/H3_REF_TURBO.md).
+- **Video favourites:** star saved clips and filter the library to **Starred**,
+  through the UI or MCP, while keeping their media and render history.
+- **Guided Hugging Face setup:** connect in the browser for optional LTX 2.5,
+  check publisher access, then approve installation. A read token remains an
+  option; publisher terms and access approval still apply.
+  [Local model setup](docs/LOCAL_MODEL_SETUP.md).
+
+One local MOSS comparison at 1024 × 1024 on an **RTX 4070 Ti SUPER 16 GB**
+recorded resident-model means of **16.920 s for Standard**, **12.375 s for
+Spectrum H1** and **4.988 s for Turbo 4**, each over two new prompts. These are
+different recipes; faster drafts can change detail and composition. See the
+[comparison settings and first-load timings](docs/MOSS_IMAGE.md#local-comparison-22-october-2026).
 
 <p align="center">
   <img src="GitHubAssets/AIPLAY_banner_1_make-music.png" alt="The Music screen: lyrics, styles and a library of finished songs." width="100%">
@@ -163,8 +196,8 @@ and hardware requirements.
 | 💬 **Chat and Simple mode** | Describe the song you want in plain words and let the assistant write the lyrics, style and title for you. |
 | ✨ **Enhance and galleries** | One click turns a rough style line or lyrics into a fuller one. Save the ones you like and reuse them later. |
 | 🎰 **Genre Roulette** | Spin six reels (genre, vocals, instrument, mood, rhythm, production) when you have no idea where to start. |
-| 🖼️ **Covers, layers and vectors** | Generate cover art with Qwen Image 2.1 when installed, or choose another available engine. Use the layer image editor for masks, selections and text. Trace a raster to SVG, review detail crops and clean selected geometry through the UI or MCP. [Vector workflow](docs/vector.md). |
-| 🎬 **Video and Production** | Generate individual clips or plan a whole project on the **Production** screen: scenes, cast, reference sheets, storyboards, saved takes and a timeline to finish. Music videos and episode projects use the same tools; for a series, carry the bible and chosen references between episode projects. Block a camera in Blender for the render to follow. |
+| 🖼️ **Covers, layers and vectors** | Generate with [MOSS-Image and its optional presets](docs/MOSS_IMAGE.md), or use Qwen Image 2.1 for references and edits. Use the layer image editor for masks, selections and text. Trace a raster to SVG, review detail crops and clean selected geometry through the UI or MCP. [Vector workflow](docs/vector.md). |
+| 🎬 **Video and Production** | Generate clips with routes including [H3 REF2V Turbo V1.1](docs/H3_REF_TURBO.md), star favourite takes, or plan a whole project on **Production**: scenes, cast, reference sheets, storyboards, saved takes and a timeline to finish. For a series, carry the bible and chosen references between episode projects. Block a camera in Blender for the render to follow. |
 | 🌀 **Reactive** | Pictures that move with a song: cut on the beat, pulse with the bass, flash on the hits. Five cut-and-dissolve styles run on the compositor alone and work on any card, AMD included. Two more repaint a clip frame by frame so the figure moves and the look turns with the music, with a black circle that opens on the bass. |
 | ⚭ **Collab** | Make an episode with friends, and **lend each other a graphics card**. A project or one scene travels as a sealed file addressed to one person; an order asking a friend to render a scene carries four words and nothing else, and the take comes home to quarantine for you to adopt or throw away. Nothing on the screen opens a connection and there is no server in it. See [COLLAB.md](docs/COLLAB.md). |
 | ◎ **Community sessions** | Open the pinned **Community** entry to find public live listening rooms and upcoming events, or borrow a style pack for your next song. Browsing does not publish your local creations. |
