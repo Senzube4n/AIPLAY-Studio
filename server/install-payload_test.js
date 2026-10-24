@@ -138,6 +138,30 @@ test('the CLI emits one JSON result with meaningful success, failure and usage e
   assert.equal(result.status, 2); assert.equal(JSON.parse(result.stdout).unsupportedParser, true);
 });
 
+test('CLI through a directory alias still runs validation while imports stay inert and escapes stay refused', async t => {
+  const { root } = await fixture(t);
+  await write(root, 'scripts/verify-install.mjs', await fs.readFile(CHECKER));
+  const alias = path.join(await temp(t), 'app alias with spaces');
+  await fs.symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const aliasedChecker = path.join(alias, 'scripts', 'verify-install.mjs');
+  const run = () => spawnSync(process.execPath, ['--experimental-vm-modules', aliasedChecker, '--root', alias], { encoding: 'utf8', windowsHide: true });
+  let result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim().split('\n').length, 1);
+  assert.equal(JSON.parse(result.stdout).ok, true, 'an aliased direct invocation must emit its validation result');
+  await write(root, 'scripts/import-only.mjs', 'import "./verify-install.mjs"; console.log("import-only");');
+  const imported = spawnSync(process.execPath, ['--experimental-vm-modules', path.join(alias, 'scripts/import-only.mjs')], { encoding: 'utf8', windowsHide: true });
+  assert.equal(imported.status, 0, imported.stderr); assert.equal(imported.stdout.trim(), 'import-only');
+  await fs.unlink(path.join(root, 'shared/model-profiles.js'));
+  result = run(); assert.equal(result.status, 1); assert.equal(JSON.parse(result.stdout).ok, false);
+  // Canonicalizing the entry identity must not admit an outside dependency.
+  const outside = await temp(t);
+  await write(outside, 'model-profiles.js', 'export const x = 1;');
+  await fs.rm(path.join(root, 'shared'), { recursive: true });
+  await fs.symlink(outside, path.join(root, 'shared'), process.platform === 'win32' ? 'junction' : 'dir');
+  result = run(); assert.equal(result.status, 1); assert.equal(JSON.parse(result.stdout).ok, false);
+});
+
 test('packaging uses manifest folders, keeps the scripts allowlist and excludes development tests', async t => {
   const { root, manifest } = await fixture(t, { include: ['server', 'launcher', 'shared', 'worker', 'scripts', 'install.json', 'NOTICE'] });
   await write(root, 'worker/runpod-worker.js', 'export const worker = true;');

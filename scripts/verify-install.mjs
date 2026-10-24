@@ -144,4 +144,10 @@ async function cli(args) {
   console.log(JSON.stringify(result));
   return result.ok ? 0 : result.unsupportedParser ? 2 : 1;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await cli(process.argv.slice(2));
+// ESM resolves the module's real path, while argv can retain a parent alias
+// (including macOS /var -> /private/var). Compare the same canonical identity.
+if (process.argv[1]) {
+  const invoked = await realpath(process.argv[1]).catch(() => null);
+  const own = await realpath(fileURLToPath(import.meta.url)).catch(() => null);
+  if (invoked && invoked === own) process.exitCode = await cli(process.argv.slice(2));
+}
