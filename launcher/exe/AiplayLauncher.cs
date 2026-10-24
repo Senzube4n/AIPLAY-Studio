@@ -69,22 +69,10 @@ static class Program
             return 1;
         }
 
-        if (!DepsPresent(root))
+        if (!DepsPresent(root) && (!InstallDependencies(root, node, path) || !DepsPresent(root)))
         {
-            string npm = Path.Combine(Path.GetDirectoryName(node), "npm.cmd");
-            string npmCmd = File.Exists(npm) ? "\"" + npm + "\"" : "npm";
-            var psi = new ProcessStartInfo("cmd.exe",
-                "/s /c \"title AIPLAY Studio - fetching dependencies & echo Fetching dependencies (a few seconds)... & " + npmCmd +
-                " install --omit=dev --no-audit --no-fund || (echo. & echo npm install failed. Are you online? & pause)\"");
-            psi.WorkingDirectory = root;
-            psi.UseShellExecute = false;
-            psi.EnvironmentVariables["PATH"] = path;
-            using (var p = Process.Start(psi)) p.WaitForExit();
-            if (!DepsPresent(root))
-            {
-                Fail("Studio's npm packages are still missing (ws, three, gltf-validator, @pixiv/three-vrm, ag-psd).\n\nOpen a terminal in\n" + root + "\nand run: npm install --omit=dev");
-                return 1;
-            }
+            Fail("Studio's locked npm packages could not be installed.\n\nOpen a terminal in\n" + root + "\nand run: npm ci --omit=dev --ignore-scripts");
+            return 1;
         }
 
         var tray = new TrayApp(root, node, path);
@@ -153,6 +141,25 @@ static class Program
             }
         }
         catch { return 0; }
+    }
+
+    // Locked packages only; dependency lifecycle scripts are not needed by Studio.
+    // The process exit is authoritative even if a failed install left folders behind.
+    static bool InstallDependencies(string root, string node, string path)
+    {
+        string npm = Path.Combine(Path.GetDirectoryName(node), "npm.cmd");
+        string npmCmd = File.Exists(npm) ? "\"" + npm + "\"" : "npm";
+        var psi = new ProcessStartInfo("cmd.exe",
+            "/d /s /c \"title AIPLAY Studio - fetching dependencies & echo Fetching dependencies (a few seconds)... & " + npmCmd +
+            " ci --omit=dev --ignore-scripts --no-audit --no-fund\"");
+        psi.WorkingDirectory = root;
+        psi.UseShellExecute = false;
+        psi.EnvironmentVariables["PATH"] = path;
+        using (var p = Process.Start(psi))
+        {
+            p.WaitForExit();
+            return p.ExitCode == 0;
+        }
     }
 
     static bool DepsPresent(string root)

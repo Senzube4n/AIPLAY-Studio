@@ -48,6 +48,7 @@ test("the installer: the original first, a stamped build, checked Node.js, nothi
   assert.match(s, /Directory\.Move\(stage, dir\)/, "one move into place");
   assert.match(s, /That folder is a git clone/, "never replaces a developer's clone");
   assert.doesNotMatch(s, /pip install|winget|msiexec|runas/i, "no machine-wide installs, no admin prompt, nothing for the engine");
+  assert.doesNotMatch(s, /chkDelete|Delete this installer|ping 127\.0\.0\.1 -n 3/, "closing, cancelling or failing never schedules installer deletion");
   assert.match(src("../.gitignore"), /^\/node\/$/m, "a private Node.js in a clone is never committed");
 });
 
@@ -76,8 +77,10 @@ test("the README's first Download button is Setup.exe, and the zip is Source cod
   assert.doesNotMatch(first[1], /archive\//, "not the source zip, which needs Node.js installed by hand");
   assert.ok(readme.indexOf(first[0]) < readme.indexOf(ZIP_URL), "the zip comes after the button");
   assert.ok(readme.includes(`<a href="${ZIP_URL}">Source code (for developers)</a>`), "the zip is labelled for developers");
-  assert.ok(readme.includes("Windows may say “Windows protected your PC” because the installer is not signed yet: "
-    + "click <b>More info</b>, then <b>Run anyway</b>."), "one plain line about SmartScreen, under the button");
+  assert.ok(readme.includes("The installer is currently unsigned."), "the download section states the current signing status");
+  assert.ok(readme.includes('keep it quarantined and use the <a href="INSTALL.md#if-antivirus-blocks-the-installer">source-install alternative</a>; do not disable protection.'),
+    "a blocked installer leads to the documented source alternative");
+  assert.doesNotMatch(readme, /click <b>More info<\/b>, then <b>Run anyway<\/b>/, "the download section does not instruct bypassing a security warning");
   const quick = readme.slice(readme.indexOf("## YuE2 music-only quickstart"));
   assert.ok(quick.indexOf(SETUP_URL) > 0 && quick.indexOf(SETUP_URL) < quick.indexOf(ZIP_URL), "the quickstart's step 1 is Setup.exe too");
   /* The name GitHub serves: RELEASING.md's upload keeps the file name, and says why. */
@@ -295,7 +298,7 @@ test("canonical origin removes inherited Bucky identity, while a selected fork o
   assert.equal(reconcileLineage({}, "https://example.test/Senzube4n/AIPLAY-Studio.git"), "", "match GitHub repository identity, not a substring");
 });
 
-test("the compiled installer selects the right fork, refuses a Git worktree and restores preserved files", async (t) => {
+test("the compiled installer keeps isolated stages, uses locked npm, refuses a Git worktree and restores preserved files", async (t) => {
   const fw = path.join(process.env.WINDIR || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319");
   const compiler = path.join(fw, "csc.exe");
   if (process.platform !== "win32" || !existsSync(compiler)) return t.skip("requires the Windows .NET Framework compiler");
@@ -306,6 +309,66 @@ test("the compiled installer selects the right fork, refuses a Git worktree and 
 static class Fixture {
   static void Entry(ZipArchive zip, string name, string content) {
     using (var writer = new StreamWriter(zip.CreateEntry("repo/" + name).Open())) writer.Write(content);
+  }
+  static void CheckBootstrap(string root, Source chosen) {
+    // Inspect the compiled close path without constructing a window, which
+    // would start the repository check. Cancel, failure and success all use it.
+    var declared = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+    if (typeof(SetupForm).GetMethod("OnFormClosed", declared) != null
+      || typeof(SetupForm).GetField("chkDelete", declared) != null)
+      throw new Exception("Closing Setup must not have a self-delete handler or option");
+
+    // Stop each real Run at its first progress event, before any network. The
+    // inner attempt must have its own stage and clean only that stage on failure.
+    string parent = Path.Combine(root, "parallel stages"), outerWork = null;
+    Directory.CreateDirectory(parent);
+    var outer = new Installer(chosen, Path.Combine(parent, "outer app"), false, false, false);
+    outer.Step += (n, total, text) => {
+      var initial = Directory.GetDirectories(parent, "~aiplay*");
+      if (initial.Length != 1) throw new Exception("Expected one isolated outer stage");
+      outerWork = initial[0];
+      File.WriteAllText(Path.Combine(outerWork, "owned.txt"), "outer attempt");
+      var inner = new Installer(chosen, Path.Combine(parent, "inner app"), false, false, false);
+      inner.Step += (ni, ti, si) => {
+        var concurrent = Directory.GetDirectories(parent, "~aiplay*");
+        if (concurrent.Length != 2) throw new Exception("Concurrent attempts must not share a stage");
+        foreach (var folder in concurrent) {
+          Guid id;
+          if (!Guid.TryParseExact(Path.GetFileName(folder).Substring("~aiplay".Length), "N", out id)
+            || !Directory.Exists(Path.Combine(folder, "a")))
+            throw new Exception("Each attempt needs a complete GUID-named stage");
+        }
+        throw new InstallException("fixture stop before network");
+      };
+      try { inner.Run(); throw new Exception("Inner fixture did not stop"); }
+      catch (InstallException e) { if (e.Message != "fixture stop before network") throw; }
+      if (Directory.GetDirectories(parent, "~aiplay*").Length != 1
+        || File.ReadAllText(Path.Combine(outerWork, "owned.txt")) != "outer attempt")
+        throw new Exception("Inner cleanup must preserve the outer attempt");
+      throw new InstallException("fixture stop before network");
+    };
+    try { outer.Run(); throw new Exception("Outer fixture did not stop"); }
+    catch (InstallException e) { if (e.Message != "fixture stop before network") throw; }
+    if (outerWork == null || Directory.GetDirectories(parent, "~aiplay*").Length != 0)
+      throw new Exception("Failed attempts must clean their own stages");
+
+    // Run the real npm process boundary against a local stand-in. No npm
+    // packages, lifecycle scripts or network are executed by this fixture.
+    string nodeDir = Path.Combine(root, "node tools"), npmStage = Path.Combine(root, "npm stage");
+    Directory.CreateDirectory(nodeDir);
+    Directory.CreateDirectory(npmStage);
+    File.WriteAllText(Path.Combine(nodeDir, "npm.cmd"), "@echo off\\r\\n>npm-args.txt echo %*\\r\\n>npm-cwd.txt echo %CD%\\r\\nmkdir node_modules\\\\ws\\r\\nmkdir node_modules\\\\three\\r\\nmkdir node_modules\\\\gltf-validator\\r\\nexit /b 0\\r\\n");
+    bool fetched = (bool)typeof(Installer).GetMethod("Npm", BindingFlags.Instance | BindingFlags.NonPublic)
+      .Invoke(outer, new object[] { Path.Combine(nodeDir, "node.exe"), npmStage });
+    if (!fetched || File.ReadAllText(Path.Combine(npmStage, "npm-args.txt")).Trim()
+      != "ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error"
+      || File.ReadAllText(Path.Combine(npmStage, "npm-cwd.txt")).Trim() != npmStage)
+      throw new Exception("npm must use the stage lockfile and suppress lifecycle scripts");
+    File.WriteAllText(Path.Combine(nodeDir, "npm.cmd"), "@echo off\\r\\nexit /b 23\\r\\n");
+    bool failedNpmAccepted = (bool)typeof(Installer).GetMethod("Npm", BindingFlags.Instance | BindingFlags.NonPublic)
+      .Invoke(outer, new object[] { Path.Combine(nodeDir, "node.exe"), npmStage });
+    if (failedNpmAccepted) throw new Exception("Stale package folders must not hide a failed npm ci");
+    Console.WriteLine("no self-delete close handler; concurrent GUID stages isolated and cleaned; locked npm ci without scripts; failed npm refused despite stale folders");
   }
   static int Main(string[] args) {
     var chosen = Sources.Original;
@@ -319,6 +382,7 @@ static class Fixture {
       }
     if (Sources.ByKey("unknown") != null) throw new Exception("An unknown source must not select a build");
     string root = args[0], app = Path.Combine(root, "app"), stage = Path.Combine(root, "stage");
+    CheckBootstrap(root, chosen);
     string archive = Path.Combine(root, "manifest.zip"), unpack = Path.Combine(root, "unpack");
     var manifest = Net.Json(File.ReadAllText(args[1]));
     Console.WriteLine("manifest array runtime type: " + manifest["include"].GetType().FullName);
@@ -428,5 +492,6 @@ static class Fixture {
     assert.match(output, /original first; both builds selectable; manifest honoured/);
     assert.match(output, /worktree refused; failed preservation restored old install/);
     assert.match(output, /malformed manifests refused; missing startup import refused; valid modules parsed without execution/);
+    assert.match(output, /no self-delete close handler; concurrent GUID stages isolated and cleaned; locked npm ci without scripts; failed npm refused despite stale folders/);
   } finally { await rm(base, { recursive: true, force: true }); }
 });

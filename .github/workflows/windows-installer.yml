@@ -1,0 +1,196 @@
+name: Windows installer build (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-installer.yml'
+      - 'installer/**'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.svg'
+      - 'web/assets/aiplay-logo.png'
+      - 'scripts/build-installer.mjs'
+      - 'scripts/build-launcher-exe.mjs'
+      - 'scripts/*sign*'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/installer_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/windows-bootstrap_test.js'
+      - 'install.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'AIPLAY Studio.exe'
+      - 'AIPLAY Studio.cmd'
+      - 'RELEASING.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-installer.yml'
+      - 'installer/**'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.svg'
+      - 'web/assets/aiplay-logo.png'
+      - 'scripts/build-installer.mjs'
+      - 'scripts/build-launcher-exe.mjs'
+      - 'scripts/*sign*'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/installer_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/windows-bootstrap_test.js'
+      - 'install.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'AIPLAY Studio.exe'
+      - 'AIPLAY Studio.cmd'
+      - 'RELEASING.md'
+
+# PRs run only on a disposable hosted runner, without signing or release credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-build:
+    name: Build and test public Windows sources
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: 'true'
+      AIPLAY_APPDATA: ${{ runner.temp }}/aiplay-windows-ci-profile
+      # This job is intentionally unsigned. No certificate or password is requested.
+      AIPLAY_SIGN_SHA1: ''
+      AIPLAY_SIGN_PFX: ''
+      AIPLAY_SIGN_PASSWORD: ''
+      AIPLAY_SIGN_TIMESTAMP: ''
+    steps:
+      - name: Check out the exact workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install locked Studio dependencies without lifecycle scripts
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Require the compiler used by the compiled fixture
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+            throw 'The Windows .NET Framework compiler is required; compiled tests must not silently skip.'
+          }
+          & $compiler /version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the launcher and Setup from public C# source
+        run: |
+          node scripts/build-launcher-exe.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/build-installer.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test the staged payload, compiled installer and Windows bootstrap
+        run: node --experimental-vm-modules --test server/install-payload_test.js server/installer_test.js server/windows-bootstrap_test.js
+
+      - name: Collect unsigned binaries, hashes and source provenance
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = (& git.exe rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) {
+            throw 'The checked-out source does not match the workflow commit.'
+          }
+          $artifact = Join-Path $env:RUNNER_TEMP 'aiplay-unsigned-windows'
+          if (Test-Path -LiteralPath $artifact) { throw 'The build artifact folder already exists.' }
+          [void](New-Item -ItemType Directory -Path $artifact)
+          $inputs = @('dist/AIPLAY Studio Setup.exe', 'AIPLAY Studio.exe')
+          $binaries = foreach ($inputFile in $inputs) {
+            $file = Get-Item -LiteralPath $inputFile
+            if ($file.Length -le 0) { throw 'An expected compiled executable is empty.' }
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne 'NotSigned' -or $null -ne $signature.SignerCertificate) {
+              throw 'This job must produce explicitly unsigned review artifacts.'
+            }
+            $target = Join-Path $artifact $file.Name
+            Copy-Item -LiteralPath $file.FullName -Destination $target
+            [ordered]@{
+              file = $file.Name
+              bytes = $file.Length
+              sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+              authenticodeStatus = [string]$signature.Status
+            }
+          }
+          $sourceFiles = @(
+            'installer/Setup.cs', 'launcher/exe/AiplayLauncher.cs',
+            'launcher/exe/make-icon.ps1', 'scripts/build-installer.mjs',
+            'web/assets/aiplay-logo.svg', 'web/assets/aiplay-logo.png',
+            'scripts/build-launcher-exe.mjs', 'install.json', 'package-lock.json',
+            '.github/workflows/windows-installer.yml'
+          ) | ForEach-Object {
+            [ordered]@{ file = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() }
+          }
+          $metadata = [ordered]@{
+            schemaVersion = 1
+            repository = $env:GITHUB_REPOSITORY
+            sourceCommit = $head
+            sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/tree/$head"
+            workflowRunUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            event = $env:GITHUB_EVENT_NAME
+            ref = $env:GITHUB_REF
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            builtAtUtc = [DateTime]::UtcNow.ToString('o')
+            runner = [ordered]@{ os = $env:RUNNER_OS; image = $env:ImageOS; imageVersion = $env:ImageVersion }
+            node = (& node --version).Trim()
+            npm = (& npm --version).Trim()
+            dependencyInstall = 'npm ci --omit=dev --ignore-scripts'
+            tests = @('server/install-payload_test.js', 'server/installer_test.js', 'server/windows-bootstrap_test.js')
+            unsigned = $true
+            antivirusApprovalClaimed = $false
+            releasePublished = $false
+            binaries = @($binaries)
+            sourceFiles = @($sourceFiles)
+          }
+          $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifact 'build-metadata.json') -Encoding utf8NoBOM
+          @'
+          UNSIGNED CI REVIEW BUILD
+
+          Built from the public source commit recorded in build-metadata.json.
+          These files are not a published release and have no trusted code-signing
+          certificate. Passing compilation and fixtures is not Avast approval,
+          a complete security audit, or a promise that SmartScreen will accept them.
+          Pull-request artifacts are untrusted review builds; inspect their exact source.
+          '@ | Set-Content -LiteralPath (Join-Path $artifact 'UNSIGNED.txt') -Encoding utf8NoBOM
+          Get-ChildItem -LiteralPath $artifact -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.Name
+          } | Set-Content -LiteralPath (Join-Path $artifact 'SHA256SUMS.txt') -Encoding ascii
+          @"
+          ## Unsigned Windows review build
+          Source commit: $head
+
+          Both public C# programs built and the installer/payload/bootstrap tests passed.
+          The artifact includes exact SHA256 sums and build metadata. This workflow
+          does not sign executables, claim antivirus approval or publish a release.
+          "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload unsigned review artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-windows-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aiplay-unsigned-windows/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

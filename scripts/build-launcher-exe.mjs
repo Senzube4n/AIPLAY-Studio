@@ -87,11 +87,7 @@ if (!SHA1 && !PFX) {
   /* /pa = the Authenticode policy an ordinary user's machine applies. A
    * self-signed certificate fails here, and that failure is the honest answer:
    * it is what everyone but you will see. */
-  try {
-    execFileSync(signtool, ["verify", "/pa", OUT], { stdio: "inherit" });
-    console.log("sign: signed and verified against the default Authenticode policy.");
-  } catch {
-    console.log("sign: SIGNED, but it does not verify against the default policy — a self-signed or "
-      + "untrusted certificate. Other machines will still see SmartScreen.");
-  }
+  // Requested signing is a release gate: an untrusted or invalid signature fails.
+  execFileSync(signtool, ["verify", "/pa", OUT], { stdio: "inherit" });
+  console.log("sign: signed and verified against the default Authenticode policy.");
 }

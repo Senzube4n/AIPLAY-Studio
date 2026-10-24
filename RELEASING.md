@@ -33,8 +33,10 @@ that file, publishing the new installer is part of finishing the work:
    is never committed; the release carries it.
 3. **Sign, if this machine has the certificate.** Either set `AIPLAY_SIGN_SHA1`
    (certificate thumbprint) before step 2, or run the `signtool` command step 2
-   prints. Never commit a certificate, a `.pfx` or a password. An unsigned
-   installer still works, but Windows SmartScreen warns about it.
+   prints. Never commit a certificate, a `.pfx` or a password. Requested signing
+   must complete and verify successfully; a failure stops the build. With no
+   signing credentials, the build is explicitly unsigned and may be blocked by
+   Windows or antivirus. Signing does not establish an antivirus false-positive verdict.
 4. **Commit and push** the source change as usual. The normal gate includes
    `server/installer_test.js` (the compiled C# unpacker and its Node validator)
    and `server/install-payload_test.js` (the staged startup import graph). Keep
@@ -58,6 +60,14 @@ that file, publishing the new installer is part of finishing the work:
 Each repository publishes its own copy. Both copies install either build: the
 installer shows Senzu's build (the original) and Bucky's, with how far apart they
 are, and the person picks.
+
+The **Windows installer build** GitHub Actions workflow builds Setup and the
+launcher from the checked-out public C# sources, runs installer/payload fixtures,
+and uploads unsigned build artifacts with SHA256 checksums and source/build
+metadata. It never publishes a release automatically and does not claim trusted
+signing. Verify the actual workflow result and downloaded artifact hashes before
+using those artifacts for a release. A signing provider must be approved and
+integrated separately; build provenance is not a replacement for Authenticode.
 
 `install.json` ships inside the app. Its `required` paths must survive filtering;
 `scripts/verify-install.mjs` additionally parses the launcher's, server's and

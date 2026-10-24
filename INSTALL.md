@@ -17,8 +17,8 @@ Node.js 20+ when this PC has none). You do **not** need ComfyUI, Python,
 MiniMax or any image/video model.
 
 1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
-   Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. When it asks which
+   The installer is currently unsigned. If antivirus blocks it, use the
+   [source-install alternative](#if-antivirus-blocks-the-installer). When it asks which
    build, choose **Senzu's**; then a folder (the default is right). It
    installs Studio plus, when this PC has no Node.js 20+, a private copy of
    it. No admin prompt. Section 3 says exactly what it does.
@@ -30,7 +30,7 @@ MiniMax or any image/video model.
    folder) and choose **Music only**. Or run these from the extracted source folder:
 
    ```text
-   npm ci --omit=dev
+   npm ci --omit=dev --ignore-scripts
    npm run start:music
    ```
 
@@ -67,10 +67,40 @@ into the same folder. Setup 1.2 could omit `shared` and `worker` even when the
 installed app showed the newest build. This is an installer problem; reinstalling
 Python or downloading the models again will not fix it.
 
-Setup 1.4 checks required files and parses the startup imports before replacing
+Setup 1.4 and newer check required files and parse the startup imports before replacing
 the app. Reinstalling keeps settings, songs and models in `.aiplay-studio`, plus
 custom workflows and the preserved Blender toolkit. If the launcher opens,
 **Update** can also repair an incomplete install at the same app version.
+
+### If antivirus blocks the installer
+
+An antivirus quarantine is a detection that needs review. Keep the detected file
+in quarantine and report it to the antivirus vendor as a suspected false positive;
+include the detection name, exact release URL and installer SHA256. Signing or a
+successful installation test does not establish that a detection is mistaken.
+
+You can use the public source without running either of Studio's executable files:
+
+1. Close any running Studio after its jobs finish. Leave the existing installation,
+   settings and model folders in place.
+2. Install [Node.js LTS](https://nodejs.org/en/download) if Node.js 20+ is unavailable.
+3. Download the [source ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip)
+   and extract it into a new folder, or clone the repository with Git.
+4. Open a terminal in the extracted folder containing `package.json` and run:
+
+   ```powershell
+   npm.cmd ci --omit=dev --ignore-scripts
+   node launcher/launcher.mjs
+   ```
+
+Choose **Full Studio** or **Music only** in the launcher and keep the terminal open.
+The existing Windows user's `.aiplay-studio` settings and saved model/engine paths
+are reused. Custom workflows stored in the old app folder stay there; copy those
+separately if needed. If antivirus reports another detection, have that reviewed
+before allowing it. No protection settings need to be disabled for this route.
+
+Setup 1.5 removes the self-delete-on-close feature and uses locked npm installation
+without dependency lifecycle scripts. These changes do not imply antivirus approval.
 
 ## The full Studio installation
 
@@ -278,9 +308,7 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 ### The easy way: AIPLAY Studio Setup.exe
 
-Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it (Windows may say
-“Windows protected your PC” because it is not signed yet: click **More info**,
-then **Run anyway**), pick Senzu's build (the original, and the
+Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it, pick Senzu's build (the original, and the
 default) or Bucky's, and press **Install**. It shows how far apart the two are
 (ahead / behind) before you choose. It then:
 
@@ -290,8 +318,11 @@ default) or Bucky's, and press **Install**. It shows how far apart the two are
   portable Node.js from nodejs.org into the install folder, checked against
   nodejs.org's SHA-256 list. There is no admin prompt, and nothing on the rest
   of the PC changes;
-- fetches the three npm packages, adds Start menu and desktop shortcuts, and
+- installs the npm packages from `package-lock.json` with lifecycle scripts disabled, adds Start menu and desktop shortcuts, and
   adds an Installed apps entry whose uninstaller asks before touching your songs.
+
+The installer is currently unsigned. If antivirus blocks it, use the
+[source-install alternative](#if-antivirus-blocks-the-installer).
 
 **Updating** is the launcher's job: **Update**, beside Check for updates at the
 bottom of the launcher, downloads the newest version of the build you installed
@@ -394,7 +425,7 @@ you will read is comments explaining each one. Here is what that is.
 
    The server imports the glTF validator and PSD writer at startup; the VRM packages provide
    the browser's avatar runtime. Both launchers fetch missing direct packages.
-   After updating an older copy, run `npm install --omit=dev` in the Studio
+   After updating an older copy, run `npm.cmd ci --omit=dev --ignore-scripts` in the Studio
    folder to reconcile the complete dependency graph with `package-lock.json`.
 3. **Finds your ComfyUI.** It looks in your home folder, Documents, Desktop, and
    on every drive from C: to F: for `ComfyUI`, `AI`, `AI\ComfyUI`,

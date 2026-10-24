@@ -1018,6 +1018,7 @@ node --test server/chat/form-tools_test.js || exit 1
 # compares — the gate exists to keep those two numbers from becoming one.
 node --test server/version_test.js || exit 1
 node --test server/installer_test.js || exit 1
+node --test server/windows-bootstrap_test.js || exit 1
 # The Models screen's sections and the "you need a model" window; a card handed
 # cleanly between music and pictures; the library player's "next".
 node --test server/models-screen_test.js || exit 1

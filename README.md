@@ -27,10 +27,12 @@
 </p>
 
 <p align="center">
-  Windows may say “Windows protected your PC” because the installer is not signed yet: click <b>More info</b>, then <b>Run anyway</b>.
+  The installer is currently unsigned. If antivirus quarantines it, keep it quarantined and use the <a href="INSTALL.md#if-antivirus-blocks-the-installer">source-install alternative</a>; do not disable protection.
 </p>
 
-**Windows Setup 1.4:** download a fresh copy from the button above. It checks
+**Windows Setup 1.5:** download a fresh copy from the button above. It keeps
+the installer file when it closes and installs locked npm dependencies without
+running dependency lifecycle scripts. It checks
 required files and startup imports before replacing an install. If an older
 installer left a `shared` module missing, reinstall into the same folder;
 settings, songs and models are kept. [Repair guide](INSTALL.md#if-the-launcher-says-a-shared-module-is-missing).
@@ -129,8 +131,9 @@ a CUDA 13.3-compatible driver and, if it is missing, the
 The Vulkan and CPU builds bring their own.
 
 1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
-   Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. Choose **Senzu's build**;
+   The installer is currently unsigned. If antivirus blocks it, use the
+   [source-install alternative](INSTALL.md#if-antivirus-blocks-the-installer).
+   Choose **Senzu's build**;
    then choose a folder, where the default is right. No
    admin prompt.
    (Developers: the [source ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,

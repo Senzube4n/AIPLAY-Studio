@@ -14,7 +14,7 @@
 //      portable Node.js from nodejs.org into .\node, checked against the
 //      SHA-256 list nodejs.org publishes. No admin prompt, no PATH change:
 //      only Studio's own processes ever see it;
-//   6. fetches the three npm packages, so the first start is instant;
+//   6. fetches the locked npm packages without running their install scripts;
 //   7. swaps the finished folder into place in one move, so a failure halfway
 //      leaves the previous install (or nothing) rather than half of one;
 //   8. Start menu and desktop shortcuts, and an entry in Apps > Installed apps
@@ -62,8 +62,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +71,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.4";
+    public const string SetupVersion = "1.5";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -433,7 +433,7 @@ sealed class Installer
         Directory.CreateDirectory(parent);
         // Beside the target, so the final swap is a rename on the same drive.
         // Short names: npm's deepest folders already use most of Windows' 260.
-        string work = Path.Combine(parent, "~aiplay" + (DateTime.Now.Ticks % 100000));
+        string work = Path.Combine(parent, "~aiplay" + Guid.NewGuid().ToString("N"));
         string stage = Path.Combine(work, "a");
         Directory.CreateDirectory(stage);
         Log.Say("installing " + src.Repo + " into " + dir);
@@ -844,7 +844,7 @@ sealed class Installer
         string nodeDir = Path.GetDirectoryName(nodeExe);
         string npm = Path.Combine(nodeDir, "npm.cmd");
         if (!File.Exists(npm)) { Detail("npm was not found beside Node.js"); return false; }
-        var psi = new ProcessStartInfo("cmd.exe", "/d /s /c \"\"" + npm + "\" install --omit=dev --no-audit --no-fund --loglevel=error\"");
+        var psi = new ProcessStartInfo("cmd.exe", "/d /s /c \"\"" + npm + "\" ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error\"");
         psi.WorkingDirectory = stage;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
@@ -862,6 +862,7 @@ sealed class Installer
             p.BeginErrorReadLine();
             if (!p.WaitForExit(10 * 60 * 1000)) { try { p.Kill(); } catch { } return false; }
             p.WaitForExit();
+            if (p.ExitCode != 0) return false;
         }
         foreach (var pkg in new[] { "ws", "three", "gltf-validator" })
             if (!Directory.Exists(Path.Combine(stage, "node_modules", pkg))) return false;
@@ -1214,7 +1215,7 @@ sealed class SetupForm : Form
     Source picked;
     Label net, stepLabel, statusLabel, detailLabel, doneTitle, doneLine, doneNotes;
     TextBox dirBox;
-    CheckBox chkDesktop, chkDelete;
+    CheckBox chkDesktop;
     Pill installBtn, primaryBtn, closeBtn;
     Bar bar;
     InstallResult last;
@@ -1315,9 +1316,7 @@ sealed class SetupForm : Form
         Add(choose, browse);
 
         chkDesktop = new CheckBox { Text = "Put a shortcut on the desktop", Location = new Point(32, 416), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
-        chkDelete = new CheckBox { Text = "Delete this installer when I close it", Location = new Point(32, 442), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
         Add(choose, chkDesktop);
-        Add(choose, chkDelete);
 
         installBtn = new Pill(existing != null ? "Reinstall" : "Install", true) { Location = new Point(32, 522), Size = new Size(496, 46) };
         installBtn.Click += (s, e) => StartInstall();
@@ -1345,7 +1344,6 @@ sealed class SetupForm : Form
     /// that only exist mid-install. Nothing is downloaded or written elsewhere.
     void Shots()
     {
-        chkDelete.Checked = false;
         Snap("choose");
         Show(work);
         stepLabel.Text = "STEP 2 OF 6"; statusLabel.Text = "Downloading AIPLAY Studio " + picked.BuildLine;
@@ -1474,24 +1472,4 @@ sealed class SetupForm : Form
         catch (Exception ex) { MessageBox.Show(this, "Could not start AIPLAY Studio:\n" + ex.Message, Program.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
-    {
-        base.OnFormClosed(e);
-        if (!chkDelete.Checked) return;
-        string me = Application.ExecutablePath;
-        // Never delete an installer that sits inside a folder it installed to,
-        // or the build output in a developer's dist\.
-        if (last != null && me.StartsWith(last.Dir + "\\", StringComparison.OrdinalIgnoreCase)) return;
-        if (me.IndexOf("\\dist\\", StringComparison.OrdinalIgnoreCase) >= 0) return;
-        try
-        {
-            // A running exe cannot delete itself; a hidden command waits for it to close.
-            var psi = new ProcessStartInfo("cmd.exe", "/d /c ping 127.0.0.1 -n 3 >nul & del /f /q \"" + me + "\"");
-            psi.CreateNoWindow = true;
-            psi.UseShellExecute = false;
-            psi.WindowStyle = ProcessWindowStyle.Hidden;
-            Process.Start(psi);
-        }
-        catch { }
-    }
 }

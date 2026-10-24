@@ -39,9 +39,9 @@ if not exist "node_modules\ag-psd" goto :deps
 goto :ready
 :deps
 echo   Fetching dependencies (a few seconds)...
-call npm install --omit=dev --no-audit --no-fund
+call npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 if errorlevel 1 (
-  echo   npm install failed. Are you online?
+  echo   npm ci failed. Are you online?
   pause
   exit /b 1
 )

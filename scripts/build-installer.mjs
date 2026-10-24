@@ -89,11 +89,7 @@ if (!SHA1 && !PFX) {
   }
   const who = SHA1 ? ["/sha1", SHA1] : ["/f", PFX, ...(process.env.AIPLAY_SIGN_PASSWORD ? ["/p", process.env.AIPLAY_SIGN_PASSWORD] : [])];
   execFileSync(signtool, ["sign", "/fd", "SHA256", ...who, "/tr", ts, "/td", "SHA256", OUT], { stdio: "inherit" });
-  try {
-    execFileSync(signtool, ["verify", "/pa", OUT], { stdio: "inherit" });
-    console.log("sign: signed and verified against the default Authenticode policy.");
-  } catch {
-    console.log("sign: SIGNED, but it does not verify against the default policy (a self-signed or untrusted "
-      + "certificate). Other machines will still see SmartScreen.");
-  }
+  // Requested signing is a release gate: an untrusted or invalid signature fails.
+  execFileSync(signtool, ["verify", "/pa", OUT], { stdio: "inherit" });
+  console.log("sign: signed and verified against the default Authenticode policy.");
 }
