@@ -98,8 +98,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
             throw 'The Windows .NET Framework compiler is required; compiled tests must not silently skip.'
           }
-          & $compiler /version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Get-Item -LiteralPath $compiler).VersionInfo.FileVersion
 
       - name: Build the launcher and Setup from public C# source
         run: |

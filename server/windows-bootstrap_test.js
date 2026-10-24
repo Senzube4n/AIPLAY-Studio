@@ -27,9 +27,17 @@ function signing(source, { requested = true, sdk = true, fail = "" } = {}) {
   const state = {
     path, OUT: "fixture.exe", process: { env, exit(code) { throw new Error("exit:" + code); } },
     console: { log(...args) { logs.push(args.join(" ")); }, error(...args) { logs.push(args.join(" ")); } },
-    existsSync() { return sdk; }, readdirSync() { return ["10.0.26100.0"]; },
     execFileSync(exe, args) { calls.push({ exe, args: Array.from(args) }); if (args[0] === fail) throw new Error("fixture-" + fail + "-failed"); },
   };
+  // A source slice must not gain helpers its real module forgot to import.
+  const importedFs = /import\s*\{([^}]+)\}\s*from\s*["']node:fs["']/.exec(source);
+  assert.ok(importedFs, "read the build's actual named filesystem imports");
+  const fsMocks = { existsSync() { return sdk; }, readdirSync() { return ["10.0.26100.0"]; } };
+  for (const entry of importedFs[1].split(",")) {
+    const binding = /^\s*(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(entry);
+    assert.ok(binding, "unsupported filesystem import binding: " + entry);
+    if (Object.hasOwn(fsMocks, binding[1])) state[binding[2] || binding[1]] = fsMocks[binding[1]];
+  }
   return { calls, logs, run() { return vm.runInNewContext(source.slice(start), state); } };
 }
 
@@ -65,6 +73,13 @@ for (const build of builds) {
     assert.match(fixture.logs.join("\n"), /signed and verified/);
   });
 }
+
+test("the signing fixture does not invent an unimported filesystem helper", () => {
+  const source = read("scripts/build-installer.mjs").replace(/\breaddirSync\s*,?\s*(?=[^}]*\}\s*from\s*["']node:fs["'])/, "");
+  const fixture = signing(source);
+  assert.throws(() => fixture.run(), /readdirSync is not defined/);
+  assert.equal(fixture.calls.length, 0);
+});
 
 test("both manual bootstrap paths install locked packages without lifecycle scripts", () => {
   const batch = read("AIPLAY Studio.cmd"), launcher = read("launcher/exe/AiplayLauncher.cs");
