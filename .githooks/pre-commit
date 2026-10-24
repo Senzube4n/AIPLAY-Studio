@@ -19,6 +19,12 @@ node --test server/linux-bootstrap_test.js server/linux-installer_test.js || exi
 # Native package acceptance is opt-in on disposable Linux runners; the offline
 # transaction/integrity tests above always run on every development platform.
 node --test server/linux-native-installer_test.js || exit 1
+node --check installer/macos/bootstrap.mjs || exit 1
+node --check scripts/build-macos-installer.mjs || exit 1
+node --test server/macos-bootstrap_test.js server/macos-installer_test.js || exit 1
+# Native app/DMG acceptance runs on disposable Intel and Apple Silicon Macs;
+# non-macOS gates skip this lane rather than pretending to certify a bundle.
+node --test server/macos-native-installer_test.js || exit 1
 node --experimental-vm-modules --test server/install-payload_test.js || exit 1
 # Sound output contracts: old cache bytes, transparent unity, PCM headroom.
 node --test server/daw/output-mode_test.js || exit 1

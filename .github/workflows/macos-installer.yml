@@ -1,0 +1,140 @@
+name: macOS installer build and acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/macos-installer-*']
+    paths:
+      - '.github/workflows/macos-installer.yml'
+      - 'installer/macos/**'
+      - 'scripts/build-macos-installer.mjs'
+      - 'scripts/build-linux-installer.mjs'
+      - 'scripts/install-manifest.mjs'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/macos-*_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/selfupdate*'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.png'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'install.json'
+      - 'package*.json'
+  pull_request:
+    paths:
+      - '.github/workflows/macos-installer.yml'
+      - 'installer/macos/**'
+      - 'scripts/build-macos-installer.mjs'
+      - 'scripts/build-linux-installer.mjs'
+      - 'scripts/install-manifest.mjs'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/macos-*_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/selfupdate*'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.png'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'install.json'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+          - os: macos-26
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      AIPLAY_MACOS_NATIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Isolate acceptance profiles
+        run: |
+          echo "AIPLAY_APPDATA=$RUNNER_TEMP/aiplay-macos-fixture-profile" >> "$GITHUB_ENV"
+          echo "AIPLAY_MACOS_SMOKE_ROOT=$RUNNER_TEMP/aiplay-macos-smoke-${{ matrix.os }}" >> "$GITHUB_ENV"
+          echo "AIPLAY_MACOS_APP=$RUNNER_TEMP/aiplay installed with spaces/AIPLAY Studio.app" >> "$GITHUB_ENV"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Test installer safety, payloads and updates
+        run: node --experimental-vm-modules --test server/macos-bootstrap_test.js server/macos-installer_test.js server/install-payload_test.js server/selfupdate_test.js
+      - name: Build pinned native app and disk image
+        run: node scripts/build-macos-installer.mjs --arch=${{ matrix.arch }}
+      - name: Verify, mount and copy the actual disk image
+        run: |
+          set -eu
+          (cd dist/macos && shasum -a 256 --check SHA256SUMS.txt)
+          dmg="dist/macos/AIPLAY-Studio-macOS-${{ matrix.arch }}.dmg"
+          mount="$RUNNER_TEMP/aiplay-macos-dmg"
+          hdiutil verify "$dmg"
+          mkdir -p "$mount" "$(dirname "$AIPLAY_MACOS_APP")"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          ditto "$mount/AIPLAY Studio.app" "$AIPLAY_MACOS_APP"
+          plutil -lint "$AIPLAY_MACOS_APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$AIPLAY_MACOS_APP"
+          hdiutil detach "$mount"
+          trap - EXIT
+      - name: Accept fresh install, repair, real launcher and Studio startup
+        run: node --test server/macos-native-installer_test.js
+      - name: Check Finder LaunchServices entry without installing another profile
+        run: |
+          set -eu
+          /usr/bin/open -W -n "$AIPLAY_MACOS_APP" --args -psn_0_12345 --help
+          codesign --verify --deep --strict "$AIPLAY_MACOS_APP"
+      - name: Check app removal preserves user files
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import path from "node:path";
+            import assert from "node:assert/strict";
+            const app=process.env.AIPLAY_MACOS_APP;
+            const expected=path.join(process.env.RUNNER_TEMP,"aiplay installed with spaces","AIPLAY Studio.app");
+            assert.equal(app,expected);
+            const record=JSON.parse(fs.readFileSync(process.env.AIPLAY_MACOS_SMOKE_ROOT+"/acceptance.json"));
+            assert.equal(record.ok,true);
+            fs.rmSync(app,{recursive:true});
+            assert.equal(fs.existsSync(app),false);
+            assert.ok(fs.existsSync(record.app+"/workflows/custom/mine.json"));
+            assert.ok(fs.existsSync(record.profile+"/keep-project.txt"));
+            fs.writeFileSync(process.env.AIPLAY_MACOS_SMOKE_ROOT+"/removal-acceptance.json",JSON.stringify({ok:true,commit:record.commit,userFilesPreserved:true}));
+          '
+      - name: Collect native acceptance evidence
+        if: always()
+        run: |
+          mkdir -p dist/macos
+          for name in acceptance.json removal-acceptance.json; do
+            if test -f "$AIPLAY_MACOS_SMOKE_ROOT/$name"; then cp "$AIPLAY_MACOS_SMOKE_ROOT/$name" "dist/macos/$name"; fi
+          done
+      - name: Upload disk image, checksums and source evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-installer-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/macos/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

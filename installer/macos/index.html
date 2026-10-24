@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AIPLAY Studio setup</title>
+<style>:root{color-scheme:dark}*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#101319;color:#edf1f6;margin:0;min-height:100vh;display:grid;place-items:center}main{width:min(620px,calc(100% - 48px));padding:32px;border:1px solid #303846;border-radius:20px;background:#181d26}h1{font-size:26px;margin:0 0 20px}.chip{display:inline-block;border:1px solid #4d6987;border-radius:30px;padding:6px 12px;color:#b9dcff}p{line-height:1.5}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 ui-monospace,monospace;color:#b6c0cf;max-height:45vh;overflow:auto}summary{cursor:pointer}small{color:#a7b4c6}button{font:inherit;color:#edf1f6;background:#263449;border:1px solid #4d6987;padding:9px 14px;border-radius:9px;cursor:pointer}</style></head>
+<body><main><h1>AIPLAY Studio</h1><span class="chip" id="state" role="status">Setting up…</span><p id="message">Preparing Studio…</p><details><summary>Setup log</summary><pre id="log"></pre></details><p><small id="hint">Studio opens when setup finishes.</small></p><button id="close" hidden>Close setup</button></main>
+<script>
+const state=document.getElementById('state'),message=document.getElementById('message'),log=document.getElementById('log'),hint=document.getElementById('hint'),close=document.getElementById('close');
+async function refresh(){
+  try{
+    const r=await fetch('status',{cache:'no-store'});if(!r.ok)throw Error();const s=await r.json();
+    state.textContent=s.state==='ready'?'Ready':s.state==='failed'?'Setup stopped':'Setting up…';message.textContent=s.message;log.textContent=(s.log||[]).join('\n');
+    if(s.launcherUrl&&/^http:\/\/127\.0\.0\.1:[0-9]{1,5}\/$/.test(s.launcherUrl)){location.replace(s.launcherUrl);return}
+    if(s.state==='failed'){hint.textContent='Close setup, then open AIPLAY Studio again to retry.';close.hidden=false}
+    if(s.state==='ready')hint.textContent='You can close this setup tab.';
+    if(s.state==='working')setTimeout(refresh,1000);
+  }catch{hint.textContent='Setup disconnected. Open AIPLAY Studio again to retry.'}
+}
+close.onclick=async()=>{try{const r=await fetch('close',{method:'POST'});if(!r.ok)throw Error();close.disabled=true;hint.textContent='Setup closed. You can close this tab.'}catch{hint.textContent='Could not close setup. Try again.'}};
+refresh();
+</script></body></html>

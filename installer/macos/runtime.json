@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "24.22.1",
+  "npmVersion": "11.19.1",
+  "minimumMacOS": "13.5",
+  "verifiedAt": "2026-10-24",
+  "releaseUrl": "https://nodejs.org/en/blog/release/v24.22.1",
+  "releaseIndexUrl": "https://nodejs.org/dist/index.json",
+  "checksums": {
+    "url": "https://nodejs.org/dist/v24.22.1/SHASUMS256.txt",
+    "bytes": 3171,
+    "sha256": "fdfbffc969c0f604beff0124d409b33a43b53f5c681d6220f80023e0d6df9dc4"
+  },
+  "architectures": {
+    "arm64": {
+      "file": "node-v24.22.1-darwin-arm64.tar.gz",
+      "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz",
+      "bytes": 53062778,
+      "sha256": "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7"
+    },
+    "x64": {
+      "file": "node-v24.22.1-darwin-x64.tar.gz",
+      "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-x64.tar.gz",
+      "bytes": 54382566,
+      "sha256": "d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035"
+    }
+  }
+}

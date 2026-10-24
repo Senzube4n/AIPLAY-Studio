@@ -15,6 +15,7 @@
 <p align="center">
   <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
   &nbsp;·&nbsp; <a href="docs/LINUX_INSTALL.md"><b>Download for Linux</b></a>
+  &nbsp;·&nbsp; <a href="docs/macOS-install.md"><b>macOS preview</b></a>
   &nbsp;·&nbsp; <a href="https://senzube4n.github.io/AIPLAY-Studio/#quick-tour">31-second Studio tour</a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
@@ -42,6 +43,12 @@ settings, songs and models are kept. [Repair guide](INSTALL.md#if-the-launcher-s
 Install the `.deb`, then open **AIPLAY Studio** from the application menu.
 Studio downloads and opens its launcher; engines and models remain optional.
 [Linux installation, updates and compatibility](docs/LINUX_INSTALL.md).
+
+**macOS preview:** drag the Apple silicon or Intel app from its `.dmg` into
+Applications. It supplies Node.js for Studio and the DAW. The preview is
+ad-hoc signed, without Developer ID signing or notarization; macOS may block
+it. Local engine/model support is separate.
+[macOS installation and limitations](docs/macOS-install.md).
 
 <p align="center">
   Runs on <b>NVIDIA</b>, <b>AMD</b>, <b>Intel Arc</b> or just your <b>CPU</b>.

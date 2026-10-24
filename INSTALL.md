@@ -949,10 +949,12 @@ runtime and application-menu shortcut. Native CI covers package installation,
 repair, launcher/server startup and keeping user files on removal. GPU inference
 and individual model workflows need separate hardware validation.
 
-**macOS:** a packaged installer is not available yet. Core Studio and ComfyUI
-have macOS paths, but Apple-specific model support needs testing. CUDA-only
-workflows do not run locally on Apple GPUs. The automatic native YuE2 GGUF
-runtime installer currently targets Windows x64.
+**macOS:** use the [Apple silicon or Intel developer preview](docs/macOS-install.md).
+The `.dmg` brings its own Node runtime for Studio and the DAW. It is ad-hoc
+signed, without Developer ID signing or notarization, and macOS may block it.
+Apple-specific model support needs separate testing; CUDA-only workflows do
+not run locally on Apple GPUs. The automatic native YuE2 GGUF runtime installer
+currently targets Windows x64.
 
 **Linux source installs:** with Node.js 20 or newer installed, run:
 

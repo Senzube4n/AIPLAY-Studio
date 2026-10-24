@@ -385,14 +385,14 @@ test("dependency installation uses the private POSIX Node/npm pair and locked ho
   assert.throws(() => dependencyInstallCommand({ platform: "freebsd" }), /Unsupported/);
 });
 
-test("Linux tarball updates select the Linux payload, validate before replacement, and preserve private runtime/custom workflows", async t => {
+for (const platform of ["linux", "darwin"]) test(`${platform} tarball updates validate before replacement and preserve private runtime/custom workflows`, async t => {
   const base = await mkdtemp(path.join(tmpdir(), "aiplay-linux-update-"));
   const realFetch = globalThis.fetch;
   t.after(async () => { globalThis.fetch = realFetch; await rm(base, { recursive: true, force: true }); });
   const app = path.join(base, "app"), source = path.join(base, "source", "Studio-new");
   const manifest = { include: ["server", "launcher", "shared", "scripts", "workflows", "install.json", "package.json", "package-lock.json", "AIPLAY Studio.exe", "AIPLAY Studio.cmd"],
     required: ["server/index.js", "launcher/launcher.mjs", "shared/profile.js", "scripts/verify-install.mjs", "scripts/install-manifest.mjs", "AIPLAY Studio.exe", "AIPLAY Studio.cmd"],
-    platforms: { linux: { omit: ["AIPLAY Studio.exe", "AIPLAY Studio.cmd"] } }, exclude: ["*_test.js"], keep: [], preserve: ["workflows/custom"] };
+    platforms: { [platform]: { omit: ["AIPLAY Studio.exe", "AIPLAY Studio.cmd"] } }, exclude: ["*_test.js"], keep: [], preserve: ["workflows/custom"] };
   const payload = { "install.json": JSON.stringify(manifest), "package.json": '{"type":"module"}', "package-lock.json": "new lock",
     "server/index.js": "import '../shared/profile.js'; throw Error('must not run');", "launcher/launcher.mjs": "export {};",
     "shared/profile.js": "export const profile = true;", "scripts/verify-install.mjs": await readFile(new URL("../scripts/verify-install.mjs", import.meta.url), "utf8"),
@@ -401,6 +401,9 @@ test("Linux tarball updates select the Linux payload, validate before replacemen
   await files(source, payload);
   await files(app, { "server/index.js": "old server", "launcher/launcher.mjs": "old launcher", "package-lock.json": "old lock",
     "server/version.gen.json": '{"commit":"1111111"}', "node/bin/node": "private Node", "node_modules/ws/index.js": "old dependency", "workflows/custom/own.json": "my workflow" });
+  const bootstrapKey = platform === "darwin" ? "macosBootstrap" : "linuxBootstrap";
+  const bootstrap = { version: 1, archiveCommit: "1".repeat(40), archiveSha256: "a".repeat(64), archiveBytes: 123 };
+  await writeFile(path.join(app, "install-info.json"), JSON.stringify({ repo: "Senzube4n/AIPLAY-Studio", commit: "1".repeat(40), [bootstrapKey]: bootstrap }));
   const archive = path.join(base, "source.tar.gz");
   execFileSync(process.platform === "win32" ? winTar : "tar", ["-czf", archive, "-C", path.dirname(source), path.basename(source)]);
   const sha = "abcdef0123456789abcdef0123456789abcdef01", requested = [], commands = [];
@@ -415,16 +418,19 @@ test("Linux tarball updates select the Linux payload, validate before replacemen
     commands.push([cmd, ...args]);
     if (args.includes("--experimental-vm-modules")) {
       assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), "old server", "old app remains until actual checker completes");
-      assert.deepEqual(args.slice(-2), ["--platform", "linux"]);
+      assert.deepEqual(args.slice(-2), ["--platform", platform]);
       return execFileSync(cmd, args, { ...opts, encoding: "utf8", windowsHide: true });
     }
     assert.ok(args.includes("ci") && args.includes("--ignore-scripts")); return "";
   };
-  const result = await selfUpdate({ root: app, platform: "linux", command });
+  const result = await selfUpdate({ root: app, platform, command });
   assert.equal(result.ok, true, result.line); assert.equal(result.changed, true);
   assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), payload["server/index.js"]);
   assert.equal(await readFile(path.join(app, "node/bin/node"), "utf8"), "private Node");
   assert.equal(await readFile(path.join(app, "workflows/custom/own.json"), "utf8"), "my workflow");
+  const updatedInfo = JSON.parse(await readFile(path.join(app, "install-info.json"), "utf8"));
+  assert.equal(updatedInfo.commit, sha);
+  assert.deepEqual(updatedInfo[bootstrapKey], bootstrap, "the original bootstrap receipt survives the app-only update");
   assert.equal(existsSync(path.join(app, "AIPLAY Studio.exe")), false); assert.equal(existsSync(path.join(app, "AIPLAY Studio.cmd")), false);
   assert.equal(commands.length, 2); assert.equal(requested.filter(url => url.includes("codeload")).length, 1);
 });

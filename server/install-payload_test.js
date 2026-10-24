@@ -165,25 +165,25 @@ test('the actual manifest-selected repository stages a complete parse-only runti
   assert.equal(missing.ok, false, 'regression reproduces the original broken package');
 });
 
-test('Linux selection omits Windows executables without weakening old Windows required paths', async t => {
+for (const platform of ['linux', 'darwin']) test(`${platform} selection omits Windows executables without weakening old Windows required paths`, async t => {
   const manifest = JSON.parse(await fs.readFile(path.join(REPO, 'install.json'), 'utf8'));
   const original = JSON.stringify(manifest);
-  const windows = selectInstallManifest(manifest, 'win32'), linux = selectInstallManifest(manifest, 'linux');
+  const windows = selectInstallManifest(manifest, 'win32'), linux = selectInstallManifest(manifest, platform);
   for (const file of ['AIPLAY Studio.exe', 'AIPLAY Studio.cmd']) {
     assert.ok(windows.include.includes(file)); assert.ok(windows.required.includes(file));
     assert.ok(!linux.include.includes(file)); assert.ok(!linux.required.includes(file));
   }
   for (const file of ['shared/model-profiles.js', 'scripts/verify-install.mjs', 'scripts/install-manifest.mjs']) assert.ok(linux.required.includes(file));
   assert.equal(JSON.stringify(manifest), original, 'selection never mutates the Windows contract');
-  assert.deepEqual(selectInstallManifest(linux, 'linux'), linux, 'selection is idempotent');
-  const stage = path.join(await temp(t), 'linux-payload');
-  await stageInstallPayload({ root: REPO, stage, platform: 'linux' });
-  assert.equal((await verifyInstall({ root: stage, platform: 'linux' })).ok, true);
+  assert.deepEqual(selectInstallManifest(linux, platform), linux, 'selection is idempotent');
+  const stage = path.join(await temp(t), `${platform}-payload`);
+  await stageInstallPayload({ root: REPO, stage, platform });
+  assert.equal((await verifyInstall({ root: stage, platform })).ok, true);
   for (const file of ['AIPLAY Studio.exe', 'AIPLAY Studio.cmd']) await assert.rejects(fs.stat(path.join(stage, file)), { code: 'ENOENT' });
   const wrongPlatform = await verifyInstall({ root: stage, platform: 'win32' });
-  assert.equal(wrongPlatform.ok, false, 'a Linux payload cannot pass Windows requirements');
+  assert.equal(wrongPlatform.ok, false, 'a Unix payload cannot pass Windows requirements');
   await fs.unlink(path.join(stage, 'scripts/install-manifest.mjs'));
-  assert.equal((await verifyInstall({ root: stage, platform: 'linux' })).ok, false, 'the shared selection helper is an actual required file');
+  assert.equal((await verifyInstall({ root: stage, platform })).ok, false, 'the shared selection helper is an actual required file');
 });
 
 test('malformed overlays and unsupported platforms fail closed, while legacy common manifests still work', async t => {

@@ -193,11 +193,11 @@ async function main() {
   }
   console.log("  ✓ no dev-server scripts, no credentials helper, no remote-shell calls");
 
-  const zip = path.join(OUT, `aiplay-studio-${pkg.version}.${platform === "linux" ? "tar.gz" : "zip"}`);
+  const zip = path.join(OUT, `aiplay-studio-${pkg.version}.${platform === "win32" ? "zip" : "tar.gz"}`);
   await new Promise((resolve, reject) => {
     // PowerShell's Compress-Archive: present on every Windows since 8.1, so the
     // packager needs nothing installed.
-    const p = platform === "linux"
+    const p = platform !== "win32"
       ? spawn("tar", ["-czf", zip, "-C", OUT, path.basename(stage)], { windowsHide: true })
       : spawn("powershell", ["-NoProfile", "-Command",
         `Compress-Archive -Path '${stage}\\*' -DestinationPath '${zip}' -Force`], { windowsHide: true });

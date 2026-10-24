@@ -12,13 +12,13 @@ straight from GitHub, and unpacks what `install.json` in that commit lists. An
 app change needs a push and nothing else.
 
 **Releases carry installers**, not frozen editions of Studio. The Windows
-installer and Linux bootstrap install application code from `main`. A GitHub
+installer, Linux bootstrap and macOS bootstrap install application code from `main`. A GitHub
 Release is where people download those installers.
 
-The Windows rules below still apply only to `installer/Setup.cs`. Linux has its
-own bootstrap version and packaging lane, described below.
+The Windows rules below still apply only to `installer/Setup.cs`. Linux and
+macOS have their own bootstrap versions and packaging lanes, described below.
 
-## When to publish a new installer
+## When to publish a new Windows installer
 
 **Only when `installer/Setup.cs` changed.** When a commit you are making touches
 that file, publishing the new installer is part of finishing the work:
@@ -80,7 +80,7 @@ The checker needs Node's `--experimental-vm-modules` flag, supplied by each
 caller. It does not check optional dynamic imports, installed models or engine
 readiness.
 
-**Don't release** for a change to anything else, including `install.json`: the
+**Don't publish a Windows installer release** for a change to anything else, including `install.json`: the
 installer reads that from the zip it downloads, so a push is enough.
 
 ## Linux installer
@@ -114,6 +114,45 @@ checksums and source metadata. Never label unsigned checksums as signing.
 An app-only change does not require rebuilding the Linux bootstrap: the
 launcher's Update button tracks app code. A bootstrap/runtime/packaging change
 needs a new package version, native acceptance and updated download links.
+
+## macOS installer
+
+`installer/macos/` and `scripts/build-macos-installer.mjs` produce separate
+Apple silicon (`arm64`) and Intel (`x64`) disk images. Each carries **AIPLAY
+Studio.app**, a private official Node/npm runtime verified against pinned
+SHA256 checksums, the bootstrap, licence notices and source/build metadata.
+The bootstrap installs writable application code outside the bundle into
+`~/Library/Application Support/AIPLAY Studio/`.
+
+Build on native macOS with `node scripts/build-macos-installer.mjs --arch=arm64`
+or `--arch=x64`. Generated images, runtimes and signing credentials must never
+be committed. The current preview uses ad-hoc signing, not Developer ID signing,
+and is not notarized. Report that status explicitly; checksums and an ad-hoc
+signature do not establish a trusted Apple publisher. Do not tell users to
+disable Gatekeeper or remove quarantine attributes.
+
+The native workflow mounts the actual disk image, copies and unmounts the app,
+checks its private runtime, and exercises installation of the tested full
+source SHA in an isolated home with spaces. It covers repair with custom
+workflow/settings preservation, the real launcher and Studio/DAW CPU startup,
+two ordinary Finder reopen requests through the same native host and child,
+and keeping user files after removal of the copied app. Native runners cover
+macOS 14/26 on Apple silicon and macOS 15 on Intel. These checks do not certify
+quarantined-download approval, GPU engines or model output quality.
+
+Require every native job to pass and verify the downloaded artifact hashes
+and metadata before publishing. Publish both `.dmg` files, their build metadata
+and combined checksums as the **pre-release** `macos-setup-v1.0` (or the next
+bootstrap version). Keep the asset names `AIPLAY-Studio-macOS-arm64.dmg` and
+`AIPLAY-Studio-macOS-x64.dmg`. Do not replace the Windows stable `latest` release.
+[The Mac install guide](docs/macOS-install.md) describes the security status
+and platform limitations.
+
+App-only updates continue through the launcher and do not require another
+disk image. Bootstrap/runtime/packaging changes need a new installer version,
+native acceptance and matching download links. A future Developer ID/notarized
+release needs an explicitly configured and verified signing/notarization lane;
+it must never silently fall back to this ad-hoc preview status.
 
 ## After every merge between the two repositories
 

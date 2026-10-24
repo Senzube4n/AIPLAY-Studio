@@ -38,6 +38,12 @@
         "AIPLAY Studio.exe",
         "AIPLAY Studio.cmd"
       ]
+    },
+    "darwin": {
+      "omit": [
+        "AIPLAY Studio.exe",
+        "AIPLAY Studio.cmd"
+      ]
     }
   },
   "exclude": [

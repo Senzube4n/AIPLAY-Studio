@@ -212,7 +212,7 @@ async function prune(dir, exclude, keep) {
 async function unzip(zip, into, platform) {
   const winTar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
   if (process.platform === "win32" && existsSync(winTar)) return run(winTar, ["-xf", zip, "-C", into]);
-  if (platform === "linux") return run("tar", ["-xf", zip, "-C", into]);
+  if (platform !== "win32") return run("tar", ["-xf", zip, "-C", into]);
   try { return await run("unzip", ["-q", zip, "-d", into]); }
   catch { return run("tar", ["-xf", zip, "-C", into]); }
 }
@@ -291,7 +291,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
   const work = await mkdtemp(path.join(tmpdir(), "aiplay-update-"));
   try {
     say(`Downloading ${sha.slice(0, 7)}…`);
-    const format = platform === "linux" ? "tar.gz" : "zip";
+    const format = platform === "win32" ? "zip" : "tar.gz";
     const zip = path.join(work, `studio.${format}`);
     const res = await fetch(`https://codeload.github.com/${repo}/${format}/${sha}`, { headers: { "User-Agent": HEADERS["User-Agent"] }, signal: AbortSignal.timeout(600_000) });
     if (!res.ok || !res.body) return { ok: false, changed: false, line: `The download failed (${res.status}).` };
