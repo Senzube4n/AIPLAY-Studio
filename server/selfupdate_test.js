@@ -16,7 +16,7 @@ import path from "node:path";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import vm from "node:vm";
-import { selfUpdate, updateSource, forwardBuild } from "./selfupdate.js";
+import { selfUpdate, updateSource, forwardBuild, dependencyInstallCommand } from "./selfupdate.js";
 
 const winTar = path.join(process.env.SystemRoot || "C:\Windows", "System32", "tar.exe");
 const canZip = process.platform === "win32" && existsSync(winTar);
@@ -160,7 +160,7 @@ test("a later folder copy failure restores the whole previous app and its versio
 test("npm failure is reported and retry installs dependencies even when the app commit is current", { skip: !canZip }, async () => {
   await withUpdateFixture(async app => {
     let installs = 0;
-    const command = async (_cmd, args) => { assert.ok(args.includes("install")); installs++; if (installs === 1) throw new Error("fixture: registry offline"); return ""; };
+    const command = async (_cmd, args) => { assert.ok(args.includes("ci")); assert.ok(args.includes("--ignore-scripts")); installs++; if (installs === 1) throw new Error("fixture: registry offline"); return ""; };
     const first = await selfUpdate({ root: app, command });
     assert.equal(first.ok, false);
     assert.equal(first.changed, true);
@@ -315,6 +315,7 @@ async function runtimeFixture(t, { sameCommit = true, missingInstalled = null, m
     "worker/runpod-worker.js": "import '../shared/model-profiles.js';",
     "shared/model-profiles.js": "export const value = 1;",
     "scripts/verify-install.mjs": await readFile(new URL("../scripts/verify-install.mjs", import.meta.url), "utf8"),
+    "scripts/install-manifest.mjs": await readFile(new URL("../scripts/install-manifest.mjs", import.meta.url), "utf8"),
     "workflows/base.json": "{}",
   };
   const installed = { ...payload, "server/version.gen.json": JSON.stringify({ commit: old.slice(0,7) }),
@@ -366,4 +367,73 @@ test("an invalid downloaded runtime or manifest is rejected before changing any 
     for (const [file, bytes] of Object.entries(installed)) assert.equal(await readFile(path.join(app,file),"utf8"), bytes, file);
     assert.ok(!(await fsPromises.readdir(app)).some(name=>name.includes(".old-")), "validation finishes before any backup/swap starts");
   });
+});
+
+test("dependency installation uses the private POSIX Node/npm pair and locked hooks-disabled installs on every platform", () => {
+  const prefix = path.resolve("fixture private runtime");
+  for (const platform of ["linux", "darwin", "win32"]) {
+    const nodePath = path.join(prefix, ...(platform === "win32" ? ["node.exe"] : ["bin", "node"]));
+    const cli = platform === "win32" ? path.join(prefix, "node_modules", "npm", "bin", "npm-cli.js")
+      : path.join(prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+    const actual = dependencyInstallCommand({ nodePath, platform, exists: file => file === cli });
+    assert.equal(actual.command, nodePath); assert.equal(actual.args[0], cli); assert.equal(actual.shell, false);
+    assert.deepEqual(actual.args.slice(1), ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]);
+    const fallback = dependencyInstallCommand({ nodePath, platform, exists: () => false });
+    assert.equal(fallback.command, platform === "win32" ? "npm.cmd" : "npm");
+    assert.ok(fallback.args.includes("ci") && fallback.args.includes("--ignore-scripts"));
+  }
+  assert.throws(() => dependencyInstallCommand({ platform: "freebsd" }), /Unsupported/);
+});
+
+test("Linux tarball updates select the Linux payload, validate before replacement, and preserve private runtime/custom workflows", async t => {
+  const base = await mkdtemp(path.join(tmpdir(), "aiplay-linux-update-"));
+  const realFetch = globalThis.fetch;
+  t.after(async () => { globalThis.fetch = realFetch; await rm(base, { recursive: true, force: true }); });
+  const app = path.join(base, "app"), source = path.join(base, "source", "Studio-new");
+  const manifest = { include: ["server", "launcher", "shared", "scripts", "workflows", "install.json", "package.json", "package-lock.json", "AIPLAY Studio.exe", "AIPLAY Studio.cmd"],
+    required: ["server/index.js", "launcher/launcher.mjs", "shared/profile.js", "scripts/verify-install.mjs", "scripts/install-manifest.mjs", "AIPLAY Studio.exe", "AIPLAY Studio.cmd"],
+    platforms: { linux: { omit: ["AIPLAY Studio.exe", "AIPLAY Studio.cmd"] } }, exclude: ["*_test.js"], keep: [], preserve: ["workflows/custom"] };
+  const payload = { "install.json": JSON.stringify(manifest), "package.json": '{"type":"module"}', "package-lock.json": "new lock",
+    "server/index.js": "import '../shared/profile.js'; throw Error('must not run');", "launcher/launcher.mjs": "export {};",
+    "shared/profile.js": "export const profile = true;", "scripts/verify-install.mjs": await readFile(new URL("../scripts/verify-install.mjs", import.meta.url), "utf8"),
+    "scripts/install-manifest.mjs": await readFile(new URL("../scripts/install-manifest.mjs", import.meta.url), "utf8"),
+    "AIPLAY Studio.exe": "Windows only", "AIPLAY Studio.cmd": "Windows only", "workflows/base.json": "{}" };
+  await files(source, payload);
+  await files(app, { "server/index.js": "old server", "launcher/launcher.mjs": "old launcher", "package-lock.json": "old lock",
+    "server/version.gen.json": '{"commit":"1111111"}', "node/bin/node": "private Node", "node_modules/ws/index.js": "old dependency", "workflows/custom/own.json": "my workflow" });
+  const archive = path.join(base, "source.tar.gz");
+  execFileSync(process.platform === "win32" ? winTar : "tar", ["-czf", archive, "-C", path.dirname(source), path.basename(source)]);
+  const sha = "abcdef0123456789abcdef0123456789abcdef01", requested = [], commands = [];
+  globalThis.fetch = async input => {
+    const url = String(input); requested.push(url);
+    if (url.includes("/commits/main")) return { ok: true, json: async () => ({ sha, commit: {} }) };
+    if (url.includes("/compare/")) return { ok: true, json: async () => ({ status: "ahead" }) };
+    assert.equal(url, `https://codeload.github.com/Senzube4n/AIPLAY-Studio/tar.gz/${sha}`);
+    return new Response(readFileSync(archive));
+  };
+  const command = async (cmd, args, opts) => {
+    commands.push([cmd, ...args]);
+    if (args.includes("--experimental-vm-modules")) {
+      assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), "old server", "old app remains until actual checker completes");
+      assert.deepEqual(args.slice(-2), ["--platform", "linux"]);
+      return execFileSync(cmd, args, { ...opts, encoding: "utf8", windowsHide: true });
+    }
+    assert.ok(args.includes("ci") && args.includes("--ignore-scripts")); return "";
+  };
+  const result = await selfUpdate({ root: app, platform: "linux", command });
+  assert.equal(result.ok, true, result.line); assert.equal(result.changed, true);
+  assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), payload["server/index.js"]);
+  assert.equal(await readFile(path.join(app, "node/bin/node"), "utf8"), "private Node");
+  assert.equal(await readFile(path.join(app, "workflows/custom/own.json"), "utf8"), "my workflow");
+  assert.equal(existsSync(path.join(app, "AIPLAY Studio.exe")), false); assert.equal(existsSync(path.join(app, "AIPLAY Studio.cmd")), false);
+  assert.equal(commands.length, 2); assert.equal(requested.filter(url => url.includes("codeload")).length, 1);
+});
+
+test("unsupported updater platforms refuse before any network or command", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = () => { throw Error("must not fetch"); };
+  try {
+    const result = await selfUpdate({ platform: "freebsd", command: async () => { throw Error("must not run"); } });
+    assert.equal(result.ok, false); assert.equal(result.changed, false); assert.match(result.line, /Unsupported/);
+  } finally { globalThis.fetch = original; }
 });

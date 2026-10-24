@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+# The same entry works in /usr/bin and beside the portable bootstrap.
+case "$0" in
+  */*) launcher=$0 ;;
+  *) launcher=$(command -v "$0") ;;
+esac
+app_dir=$(CDPATH= cd "$(dirname "$launcher")" && pwd -P)
+if [ ! -f "$app_dir/bootstrap.mjs" ]; then
+  app_dir=/usr/lib/aiplay-studio
+fi
+if [ ! -x "$app_dir/runtime/bin/node" ] || [ ! -r "$app_dir/bootstrap.mjs" ]; then
+  printf '%s\n' 'AIPLAY Studio bootstrap is incomplete. Reinstall its Linux package.' >&2
+  exit 1
+fi
+
+# This affects only Studio and its children, never the user's shell profile.
+PATH="$app_dir/runtime/bin:$PATH"
+export PATH
+exec "$app_dir/runtime/bin/node" "$app_dir/bootstrap.mjs" "$@"

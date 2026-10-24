@@ -52,6 +52,8 @@ server/version.archive.json export-subst
 *.json text=auto eol=lf
 *.md   text=auto eol=lf
 *.sh   text=auto eol=lf
+installer/linux/aiplay-studio text eol=lf
+installer/linux/*.desktop text eol=lf
 .githooks/* text=auto eol=lf
 
 # WHAT cmd.exe AND POWERSHELL RUN IS CRLF, ALSO ON EVERY MACHINE, which is why

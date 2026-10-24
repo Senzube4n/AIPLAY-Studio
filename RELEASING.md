@@ -11,9 +11,12 @@ every clone live in tracked files like this one. Follow them without being asked
 straight from GitHub, and unpacks what `install.json` in that commit lists. An
 app change needs a push and nothing else.
 
-**The only release is the installer**, `AIPLAY Studio Setup.exe`. It knows two
-repository names and nothing else about Studio, so it changes rarely. A GitHub
-Release is simply where people download it from.
+**Releases carry installers**, not frozen editions of Studio. The Windows
+installer and Linux bootstrap install application code from `main`. A GitHub
+Release is where people download those installers.
+
+The Windows rules below still apply only to `installer/Setup.cs`. Linux has its
+own bootstrap version and packaging lane, described below.
 
 ## When to publish a new installer
 
@@ -79,6 +82,38 @@ readiness.
 
 **Don't release** for a change to anything else, including `install.json`: the
 installer reads that from the zip it downloads, so a push is enough.
+
+## Linux installer
+
+`installer/linux/` and `scripts/build-linux-installer.mjs` produce architecture-
+specific `.deb` packages and portable `.tar.gz` bundles, including a private Node
+runtime with pinned SHA256 checksums. No maintainer scripts run during package
+installation. The application-menu entry opens the user-level bootstrap, which
+stages and validates the current app before replacing an existing app.
+
+Build on native Linux with `node scripts/build-linux-installer.mjs --arch=x64`
+or `--arch=arm64`. Keep the runtime pin and its official archive checksums
+together. Build artifacts include licence notices, checksums and source/build
+metadata. Never commit the Node runtime or generated packages.
+
+The **Linux installer build and acceptance** workflow builds on Ubuntu 22.04 x64,
+Ubuntu 24.04 x64 and Ubuntu 24.04 ARM64. It installs the actual `.deb`, uses the
+bundled Node/npm to install an immutable app commit in an isolated home with
+spaces, repairs it while preserving a custom workflow and settings, starts the
+real launcher and Studio/DAW without generation, then removes the package and
+checks user files remain. It also runs offline failure/rollback/payload tests.
+This is installer/core acceptance, not GPU/model compatibility certification.
+
+Before publishing, require every native acceptance job to pass and download
+and hash-check the actual artifacts. Publish the Linux assets as a **pre-release**
+under `linux-setup-v1.0` (or the next bootstrap version), without replacing the
+Windows stable `latest` release. The README's Windows download depends on that
+stable release. Include both architectures, their portable bundles, combined
+checksums and source metadata. Never label unsigned checksums as signing.
+
+An app-only change does not require rebuilding the Linux bootstrap: the
+launcher's Update button tracks app code. A bootstrap/runtime/packaging change
+needs a new package version, native acceptance and updated download links.
 
 ## After every merge between the two repositories
 

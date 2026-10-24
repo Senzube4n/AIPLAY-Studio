@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
+  &nbsp;·&nbsp; <a href="docs/LINUX_INSTALL.md"><b>Download for Linux</b></a>
   &nbsp;·&nbsp; <a href="https://senzube4n.github.io/AIPLAY-Studio/#quick-tour">31-second Studio tour</a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
@@ -36,6 +37,11 @@ running dependency lifecycle scripts. It checks
 required files and startup imports before replacing an install. If an older
 installer left a `shared` module missing, reinstall into the same folder;
 settings, songs and models are kept. [Repair guide](INSTALL.md#if-the-launcher-says-a-shared-module-is-missing).
+
+**Linux:** desktop packages for Intel/AMD x64 and ARM64 bring their own Node.js.
+Install the `.deb`, then open **AIPLAY Studio** from the application menu.
+Studio downloads and opens its launcher; engines and models remain optional.
+[Linux installation, updates and compatibility](docs/LINUX_INSTALL.md).
 
 <p align="center">
   Runs on <b>NVIDIA</b>, <b>AMD</b>, <b>Intel Arc</b> or just your <b>CPU</b>.

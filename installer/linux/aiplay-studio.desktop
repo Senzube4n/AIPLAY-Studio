@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AIPLAY Studio
+Comment=Local music, images and video studio
+Exec=/usr/bin/aiplay-studio
+TryExec=/usr/bin/aiplay-studio
+Icon=aiplay-studio
+Terminal=false
+StartupNotify=false
+Categories=AudioVideo;Audio;Video;Graphics;

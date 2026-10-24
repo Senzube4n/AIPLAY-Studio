@@ -1,0 +1,144 @@
+name: Linux installer build and acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/linux-installer-*']
+    paths:
+      - '.github/workflows/linux-installer.yml'
+      - 'installer/linux/**'
+      - 'scripts/build-linux-installer.mjs'
+      - 'scripts/install-manifest.mjs'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/linux-*_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/selfupdate*'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.svg'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'install.json'
+      - 'package*.json'
+  pull_request:
+    paths:
+      - '.github/workflows/linux-installer.yml'
+      - 'installer/linux/**'
+      - 'scripts/build-linux-installer.mjs'
+      - 'scripts/install-manifest.mjs'
+      - 'scripts/verify-install.mjs'
+      - 'scripts/package.mjs'
+      - 'server/linux-*_test.js'
+      - 'server/install-payload_test.js'
+      - 'server/selfupdate*'
+      - 'launcher/**'
+      - 'web/assets/aiplay-logo.svg'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'install.json'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: x64
+            deb: amd64
+          - os: ubuntu-24.04
+            arch: x64
+            deb: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            deb: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      AIPLAY_LINUX_NATIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Isolate the acceptance profile
+        run: |
+          echo "AIPLAY_APPDATA=$RUNNER_TEMP/aiplay-linux-fixture-profile" >> "$GITHUB_ENV"
+          echo "AIPLAY_LINUX_SMOKE_ROOT=$RUNNER_TEMP/aiplay-linux-smoke-${{ matrix.os }}" >> "$GITHUB_ENV"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Test installer safety, platform payloads and updates
+        run: node --experimental-vm-modules --test server/linux-bootstrap_test.js server/linux-installer_test.js server/install-payload_test.js server/selfupdate_test.js
+      - name: Build checksum-verified native Linux packages
+        run: node scripts/build-linux-installer.mjs --arch=${{ matrix.arch }}
+      - name: Validate and install the actual Debian package
+        run: |
+          set -eu
+          (cd dist/linux && sha256sum --check SHA256SUMS.txt)
+          dpkg-deb --info dist/linux/AIPLAY-Studio-Linux-${{ matrix.deb }}.deb
+          sudo apt-get update -qq
+          sudo apt-get install -y ./dist/linux/AIPLAY-Studio-Linux-${{ matrix.deb }}.deb desktop-file-utils
+          desktop-file-validate /usr/share/applications/aiplay-studio.desktop
+          test -x /usr/bin/aiplay-studio
+          test -x /usr/lib/aiplay-studio/runtime/bin/node
+      - name: Accept fresh install, repair, real launcher and Studio startup
+        run: node --test server/linux-native-installer_test.js
+      - name: Check package removal keeps projects and settings
+        run: |
+          set -eu
+          sudo dpkg --remove aiplay-studio
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import assert from "node:assert/strict";
+            const record=JSON.parse(fs.readFileSync(process.env.AIPLAY_LINUX_SMOKE_ROOT+"/acceptance.json"));
+            assert.equal(record.ok,true);
+            assert.ok(fs.existsSync(record.app+"/workflows/custom/mine.json"));
+            assert.ok(fs.existsSync(record.profile+"/keep-project.txt"));
+            assert.equal(fs.existsSync("/usr/bin/aiplay-studio"),false);
+          '
+      - name: Accept the portable bundle after removing the system package
+        run: |
+          set -eu
+          portable="$RUNNER_TEMP/aiplay portable with spaces"
+          mkdir -p "$portable"
+          tar -xzf dist/linux/AIPLAY-Studio-Linux-${{ matrix.deb }}.tar.gz -C "$portable"
+          export AIPLAY_PORTABLE_ENTRY="$portable/aiplay-studio-linux-${{ matrix.deb }}/aiplay-studio"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import path from "node:path";
+            import assert from "node:assert/strict";
+            import {execFileSync} from "node:child_process";
+            const record=JSON.parse(fs.readFileSync(process.env.AIPLAY_LINUX_SMOKE_ROOT+"/acceptance.json"));
+            const env={...process.env,HOME:path.dirname(record.profile),XDG_DATA_HOME:path.dirname(path.dirname(record.app)),AIPLAY_APPDATA:record.profile,PATH:"/usr/bin:/bin"};
+            const output=execFileSync(process.env.AIPLAY_PORTABLE_ENTRY,["--install-only","--repo",record.repo,"--ref",record.commit],{env,encoding:"utf8",timeout:60000});
+            assert.match(output,/installed/i);
+            assert.ok(fs.existsSync(record.app+"/workflows/custom/mine.json"));
+            fs.writeFileSync(process.env.AIPLAY_LINUX_SMOKE_ROOT+"/portable-acceptance.json",JSON.stringify({ok:true,commit:record.commit}));
+          '
+      - name: Collect acceptance evidence
+        if: always()
+        run: |
+          mkdir -p dist/linux
+          if test -f "$AIPLAY_LINUX_SMOKE_ROOT/acceptance.json"; then cp "$AIPLAY_LINUX_SMOKE_ROOT/acceptance.json" dist/linux/acceptance.json; fi
+          if test -f "$AIPLAY_LINUX_SMOKE_ROOT/portable-acceptance.json"; then cp "$AIPLAY_LINUX_SMOKE_ROOT/portable-acceptance.json" dist/linux/portable-acceptance.json; fi
+      - name: Upload packages, checksums and build evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-installer-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/linux/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

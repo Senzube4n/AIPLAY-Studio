@@ -6,7 +6,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
-import { verifyInstall, installPathAllowed } from '../scripts/verify-install.mjs';
+import { verifyInstall, installPathAllowed, selectInstallManifest } from '../scripts/verify-install.mjs';
 import { stageInstallPayload } from '../scripts/package.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -32,6 +32,7 @@ async function fixture(t, changes = {}) {
   await write(root, 'server/index.js', 'import { x } from "../shared/model-profiles.js"; throw Error("must never execute");');
   await write(root, 'shared/model-profiles.js', 'export const x = 1;');
   await write(root, 'launcher/launcher.mjs', 'export { x } from "../shared/model-profiles.js";');
+  await write(root, 'scripts/install-manifest.mjs', await fs.readFile(new URL('../scripts/install-manifest.mjs', import.meta.url)));
   return { root, manifest };
 }
 
@@ -95,7 +96,8 @@ test('invalid manifest arrays, unsafe paths and nested include entries fail with
   for (const invalid of [null, {}, { ...manifest, include: [] }, { ...manifest, include: ['server/nested'] },
     { ...manifest, include: ['../server'] }, { ...manifest, required: 'server/index.js' },
     { ...manifest, required: ['../outside.js'] }, { ...manifest, exclude: '*.js' },
-    { ...manifest, keep: {} }, { ...manifest, exclude: [1] }, { ...manifest, keep: [null] }]) {
+    { ...manifest, keep: {} }, { ...manifest, exclude: [1] }, { ...manifest, keep: [null] },
+    { ...manifest, preserve: '../app' }, { ...manifest, preserve: ['../app'] }]) {
     const report = await verifyInstall({ root, manifest: invalid });
     assert.equal(report.ok, false, JSON.stringify(invalid));
     assert.equal(report.errors[0].file, 'install.json');
@@ -161,4 +163,38 @@ test('the actual manifest-selected repository stages a complete parse-only runti
   await fs.unlink(profile);
   const missing = await verifyInstall({ root: stage });
   assert.equal(missing.ok, false, 'regression reproduces the original broken package');
+});
+
+test('Linux selection omits Windows executables without weakening old Windows required paths', async t => {
+  const manifest = JSON.parse(await fs.readFile(path.join(REPO, 'install.json'), 'utf8'));
+  const original = JSON.stringify(manifest);
+  const windows = selectInstallManifest(manifest, 'win32'), linux = selectInstallManifest(manifest, 'linux');
+  for (const file of ['AIPLAY Studio.exe', 'AIPLAY Studio.cmd']) {
+    assert.ok(windows.include.includes(file)); assert.ok(windows.required.includes(file));
+    assert.ok(!linux.include.includes(file)); assert.ok(!linux.required.includes(file));
+  }
+  for (const file of ['shared/model-profiles.js', 'scripts/verify-install.mjs', 'scripts/install-manifest.mjs']) assert.ok(linux.required.includes(file));
+  assert.equal(JSON.stringify(manifest), original, 'selection never mutates the Windows contract');
+  assert.deepEqual(selectInstallManifest(linux, 'linux'), linux, 'selection is idempotent');
+  const stage = path.join(await temp(t), 'linux-payload');
+  await stageInstallPayload({ root: REPO, stage, platform: 'linux' });
+  assert.equal((await verifyInstall({ root: stage, platform: 'linux' })).ok, true);
+  for (const file of ['AIPLAY Studio.exe', 'AIPLAY Studio.cmd']) await assert.rejects(fs.stat(path.join(stage, file)), { code: 'ENOENT' });
+  const wrongPlatform = await verifyInstall({ root: stage, platform: 'win32' });
+  assert.equal(wrongPlatform.ok, false, 'a Linux payload cannot pass Windows requirements');
+  await fs.unlink(path.join(stage, 'scripts/install-manifest.mjs'));
+  assert.equal((await verifyInstall({ root: stage, platform: 'linux' })).ok, false, 'the shared selection helper is an actual required file');
+});
+
+test('malformed overlays and unsupported platforms fail closed, while legacy common manifests still work', async t => {
+  const { root, manifest } = await fixture(t);
+  for (const platform of ['win32', 'linux', 'darwin']) assert.equal((await verifyInstall({ root, platform })).ok, true);
+  const declared = { ...manifest, platforms: { linux: { omit: ['Windows.exe'] } } };
+  for (const platform of ['freebsd', 'aix', 'darwin']) assert.equal((await verifyInstall({ root, manifest: declared, platform })).ok, false);
+  for (const platforms of [null, [], { linux: [] }, { linux: { omit: '../app' } }, { linux: { omit: ['../app'] } },
+    { linux: { omit: ['server/index.js'] } }, { linux: { omit: ['*.exe'] } }, { linux: { omit: [], include: ['server'] } }, { mystery: { omit: [] } }]) {
+    assert.equal((await verifyInstall({ root, manifest: { ...manifest, platforms }, platform: 'linux' })).ok, false, JSON.stringify(platforms));
+  }
+  const result = spawnSync(process.execPath, ['--experimental-vm-modules', CHECKER, '--root', root, '--platform', 'linux'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).platform, 'linux');
 });

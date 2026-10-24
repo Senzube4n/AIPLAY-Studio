@@ -3,6 +3,8 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { selectInstallManifest } from './install-manifest.mjs';
+export { selectInstallManifest };
 
 const DEFAULT_ENTRIES = ['server/index.js', 'launcher/launcher.mjs'];
 const MAX_MODULE_BYTES = 16 * 1024 * 1024;
@@ -22,14 +24,6 @@ function matches(value, pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp('^' + escaped + '$', 'i').test(value);
 }
-function validManifest(manifest) {
-  return manifest && !Array.isArray(manifest)
-    && Array.isArray(manifest.include) && manifest.include.length > 0
-    && manifest.include.every(entry => relativePath(entry) && !entry.includes('/'))
-    && (manifest.required === undefined || (Array.isArray(manifest.required) && manifest.required.every(relativePath)))
-    && ['exclude', 'keep'].every(key => manifest[key] === undefined || (Array.isArray(manifest[key])
-      && manifest[key].every(pattern => typeof pattern === 'string' && !!pattern && !/[\x00-\x1f]/.test(pattern))));
-}
 export function installPathAllowed(file, manifest) {
   if (!relativePath(file) || !manifest.include.some(entry => file === entry || file.startsWith(entry + '/'))) return false;
   const basename = path.posix.basename(file);
@@ -40,8 +34,8 @@ export function installPathAllowed(file, manifest) {
 /** Local static startup imports only. Bare npm packages and dynamic imports are
  * deliberately out of scope. An optional required array adds non-JS entry files.
  * Older manifests without required are valid; worker is required only if shipped. */
-export async function verifyInstall({ root, manifest } = {}) {
-  const result = { ok: false, root: path.resolve(root || '.'), entries: [], modulesChecked: 0, filesChecked: 0, errors: [] };
+export async function verifyInstall({ root, manifest, platform = process.platform } = {}) {
+  const result = { ok: false, root: path.resolve(root || '.'), platform, entries: [], modulesChecked: 0, filesChecked: 0, errors: [] };
   function error(file, message, dependency) {
     if (result.errors.length < 100) result.errors.push({ file, ...(dependency ? { dependency } : {}), message });
   }
@@ -64,8 +58,9 @@ export async function verifyInstall({ root, manifest } = {}) {
       return result;
     }
   }
-  if (!validManifest(manifest)) {
-    error('install.json', 'The installation manifest needs a nonempty top-level include array and valid optional required, exclude and keep arrays.');
+  try { manifest = selectInstallManifest(manifest, platform); }
+  catch (failure) {
+    error('install.json', failure.message);
     return result;
   }
   result.entries = [...DEFAULT_ENTRIES, ...(manifest.include.includes('worker') ? ['worker/runpod-worker.js'] : [])];
@@ -140,11 +135,12 @@ export async function verifyInstall({ root, manifest } = {}) {
 }
 
 async function cli(args) {
-  if (args.length !== 2 || args[0] !== '--root' || !path.isAbsolute(args[1])) {
-    console.log(JSON.stringify({ ok: false, errors: [{ file: '.', message: 'Use node --experimental-vm-modules scripts/verify-install.mjs --root ABSOLUTE_APP_FOLDER.' }] }));
+  if (![2, 4].includes(args.length) || args[0] !== '--root' || !path.isAbsolute(args[1])
+    || (args.length === 4 && (args[2] !== '--platform' || !['win32', 'linux', 'darwin'].includes(args[3])))) {
+    console.log(JSON.stringify({ ok: false, errors: [{ file: '.', message: 'Use node --experimental-vm-modules scripts/verify-install.mjs --root ABSOLUTE_APP_FOLDER [--platform win32|linux|darwin].' }] }));
     return 2;
   }
-  const result = await verifyInstall({ root: args[1] });
+  const result = await verifyInstall({ root: args[1], ...(args.length === 4 ? { platform: args[3] } : {}) });
   console.log(JSON.stringify(result));
   return result.ok ? 0 : result.unsupportedParser ? 2 : 1;
 }

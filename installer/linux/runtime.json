@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "24.22.1",
+  "npmVersion": "11.19.1",
+  "verifiedAt": "2026-10-24",
+  "releaseUrl": "https://nodejs.org/en/blog/release/v24.22.1",
+  "releaseIndexUrl": "https://nodejs.org/dist/index.json",
+  "checksums": {
+    "url": "https://nodejs.org/dist/v24.22.1/SHASUMS256.txt",
+    "bytes": 3171,
+    "sha256": "fdfbffc969c0f604beff0124d409b33a43b53f5c681d6220f80023e0d6df9dc4"
+  },
+  "architectures": {
+    "x64": {
+      "debian": "amd64",
+      "file": "node-v24.22.1-linux-x64.tar.gz",
+      "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
+      "bytes": 58290700,
+      "sha256": "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
+    },
+    "arm64": {
+      "debian": "arm64",
+      "file": "node-v24.22.1-linux-arm64.tar.gz",
+      "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
+      "bytes": 58021129,
+      "sha256": "33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3"
+    }
+  }
+}

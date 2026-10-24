@@ -38,6 +38,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { selectInstallManifest } from "../scripts/install-manifest.mjs";
 
 const ROOT_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ORIGINAL = "Senzube4n/AIPLAY-Studio";
@@ -58,7 +59,7 @@ const run = (cmd, args, opts = {}) => new Promise((ok, fail) => {
 });
 const readJson = async (f) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return null; } };
 
-async function installManifest(root) {
+async function installManifest(root, platform) {
   let raw;
   try { raw = await readFile(path.join(root, "install.json"), "utf8"); }
   catch (e) { if (e.code === "ENOENT") return null; throw new Error("The install manifest could not be read."); }
@@ -76,19 +77,19 @@ async function installManifest(root) {
     if (/[\\:]/.test(name) || name.startsWith("/") || name.split("/").some(part => !part || part === "." || part === ".."))
       throw new Error(`The install manifest has an unsafe ${key} path.`);
   }
-  return manifest;
+  return selectInstallManifest(manifest, platform);
 }
 
 /** Parse only. Never import or start the downloaded application to test it. */
-async function verifyRuntime(root, manifest, command) {
+async function verifyRuntime(root, manifest, command, platform, nodePath) {
   const checker = path.join(root, "scripts", "verify-install.mjs");
   if (!existsSync(checker)) {
     if (manifest?.required !== undefined) throw new Error("The runtime validator is missing from this build.");
     return; // Compatibility with historical builds that did not ship a checker.
   }
   let output;
-  try { output = JSON.parse(await command(process.execPath,
-    ["--experimental-vm-modules", checker, "--root", root], { cwd: root, timeout: 120_000 })); }
+  try { output = JSON.parse(await command(nodePath,
+    ["--experimental-vm-modules", checker, "--root", root, "--platform", platform], { cwd: root, timeout: 120_000 })); }
   catch { throw new Error("The runtime files failed validation. Download the current installer to repair this build."); }
   if (output?.ok !== true) throw new Error("The runtime files failed validation. Download the current installer to repair this build.");
 }
@@ -206,11 +207,12 @@ async function prune(dir, exclude, keep) {
   }
 }
 
-/** Unpack a zip with what the machine has: Windows' own tar.exe (bsdtar reads
- *  zip), else unzip. No npm dependency for a thing done once a week. */
-async function unzip(zip, into) {
+/** Select extraction tools for the host, not the requested payload platform.
+ * Windows' bsdtar reads both ZIP and tar.gz without Git's remote-path parsing. */
+async function unzip(zip, into, platform) {
   const winTar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
   if (process.platform === "win32" && existsSync(winTar)) return run(winTar, ["-xf", zip, "-C", into]);
+  if (platform === "linux") return run("tar", ["-xf", zip, "-C", into]);
   try { return await run("unzip", ["-q", zip, "-d", into]); }
   catch { return run("tar", ["-xf", zip, "-C", into]); }
 }
@@ -220,10 +222,11 @@ async function unzip(zip, into) {
  * Returns { ok, changed, line, restart } — never throws for the ordinary
  * refusals (offline, dirty tree, already current); those come back as `line`.
  */
-export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command = run } = {}) {
+export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command = run, platform = process.platform, nodePath = process.execPath } = {}) {
+  if (!["win32", "linux", "darwin"].includes(platform)) return { ok: false, changed: false, line: `Unsupported installation platform: ${platform}. Nothing was changed.` };
   const src = await updateSource(root);
   const dependencies = async (lockBefore, changed, line) => {
-    try { await npmIfChanged(root, lockBefore, say, command); }
+    try { await npmIfChanged(root, lockBefore, say, command, platform, nodePath); }
     catch (e) { return { ok: false, changed, restart: changed, line: `${changed ? "App files updated, but" : "The pending"} dependency install failed: ${e.message}. Press Update again to retry before starting Studio.` }; }
     return { ok: true, changed, restart: changed, line };
   };
@@ -271,7 +274,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
     }
     if (relation === "identical") {
       try {
-        await verifyRuntime(root, await installManifest(root), command);
+        await verifyRuntime(root, await installManifest(root, platform), command, platform, nodePath);
         const lock = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
         return dependencies(lock, false, "Already up to date.");
       } catch {
@@ -288,22 +291,23 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
   const work = await mkdtemp(path.join(tmpdir(), "aiplay-update-"));
   try {
     say(`Downloading ${sha.slice(0, 7)}…`);
-    const zip = path.join(work, "studio.zip");
-    const res = await fetch(`https://codeload.github.com/${repo}/zip/${sha}`, { headers: { "User-Agent": HEADERS["User-Agent"] }, signal: AbortSignal.timeout(600_000) });
+    const format = platform === "linux" ? "tar.gz" : "zip";
+    const zip = path.join(work, `studio.${format}`);
+    const res = await fetch(`https://codeload.github.com/${repo}/${format}/${sha}`, { headers: { "User-Agent": HEADERS["User-Agent"] }, signal: AbortSignal.timeout(600_000) });
     if (!res.ok || !res.body) return { ok: false, changed: false, line: `The download failed (${res.status}).` };
     await pipeline(Readable.fromWeb(res.body), createWriteStream(zip));
 
     say("Unpacking…");
     const out = path.join(work, "x");
     await mkdir(out);
-    await unzip(zip, out);
+    await unzip(zip, out, platform);
     const top = (await readdir(out))[0];
     const fresh = path.join(out, top || "");
     if (!top || !existsSync(path.join(fresh, "launcher", "launcher.mjs"))) {
       return { ok: false, changed: false, line: "The download is not a Studio build (no launcher inside). Nothing was changed." };
     }
-    const manifest = await installManifest(fresh);
-    const include = [...(manifest?.include || DEFAULT_INCLUDE)];
+    const manifest = await installManifest(fresh, platform);
+    const include = [...(manifest?.include || DEFAULT_INCLUDE.filter(name => platform === "win32" || !["AIPLAY Studio.exe", "AIPLAY Studio.cmd"].includes(name)))];
     const exclude = manifest ? manifest.exclude || [] : ["*.md"];
     const keep = manifest ? manifest.keep || [] : ["LICENSE*", "NOTICE*"];
     /* Folders inside the app that hold the person's own files. They come
@@ -317,7 +321,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
       if (existsSync(from) && (await stat(from)).isDirectory()) await prune(from, exclude, keep);
     }
     say("Checking the downloaded runtime files…");
-    await verifyRuntime(fresh, manifest, command);
+    await verifyRuntime(fresh, manifest, command, platform, nodePath);
 
     say("Replacing the app files…");
     const lockBefore = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
@@ -339,14 +343,26 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
 }
 
 /** npm only when the dependency list moved, with the Node.js this runs on. */
-async function npmIfChanged(root, lockBefore, say, command = run) {
+export function dependencyInstallCommand({ nodePath = process.execPath, platform = process.platform, exists = existsSync } = {}) {
+  if (!["win32", "linux", "darwin"].includes(platform)) throw Error(`Unsupported installation platform: ${platform}`);
+  const nodeDir = path.dirname(nodePath);
+  const candidates = [
+    ...(platform !== "win32" ? [path.join(nodeDir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js")] : []),
+    path.join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  const args = ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"];
+  const cli = candidates.find(file => exists(file));
+  return cli ? { command: nodePath, args: [cli, ...args], shell: false }
+    : { command: platform === "win32" ? "npm.cmd" : "npm", args, shell: platform === "win32" };
+}
+
+async function npmIfChanged(root, lockBefore, say, command = run, platform = process.platform, nodePath = process.execPath) {
   const lockAfter = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
   const pending = path.join(root, ".aiplay-update-npm-pending");
   if (lockAfter === lockBefore && !existsSync(pending)) return;
   await writeFile(pending, "Dependency installation needs to finish before starting Studio.\n");
   say("Updating Studio's npm packages…");
-  const cli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-  if (existsSync(cli)) await command(process.execPath, [cli, "install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: root, timeout: 600_000 });
-  else await command(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: root, timeout: 600_000, shell: process.platform === "win32" });
+  const install = dependencyInstallCommand({ nodePath, platform });
+  await command(install.command, install.args, { cwd: root, timeout: 600_000, shell: install.shell });
   await rm(pending, { force: true });
 }

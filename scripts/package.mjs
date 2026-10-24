@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stampForPackage, versionLine } from "../server/version.js";
-import { installPathAllowed } from "./verify-install.mjs";
+import { installPathAllowed, selectInstallManifest } from "./verify-install.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "dist");
@@ -41,6 +41,7 @@ const SCRIPTS = [
   "start-cloud.mjs",        // Use Comfy API
   "start-remote.mjs",       // RunPod GPU
   "verify-install.mjs",     // offline runtime payload validation
+  "install-manifest.mjs",   // pure platform selection shared with updates/setup
   "install-engine.mjs",     // the launcher's "Install ComfyUI"
   "build-launcher-exe.mjs", // rebuild AIPLAY Studio.exe + launcher/aiplay.ico from source
   "dav_encode.py",          // audio reference: the encode ComfyUI refuses to do
@@ -93,8 +94,8 @@ async function walk(dir, base = dir) {
 }
 
 /** Stage the manifest-selected payload without running it or touching dist. */
-export async function stageInstallPayload({ root, stage }) {
-  const manifest = JSON.parse(await readFile(path.join(root, "install.json"), "utf8"));
+export async function stageInstallPayload({ root, stage, platform = process.platform }) {
+  const manifest = selectInstallManifest(JSON.parse(await readFile(path.join(root, "install.json"), "utf8")), platform);
   if (!Array.isArray(manifest.include) || !manifest.include.length
     || manifest.include.some(name => typeof name !== "string" || !name || /[\\/:*?"<>|\x00-\x1f]/.test(name) || name === "." || name === "..")) {
     throw new Error("install.json must name safe top-level payload files and folders.");
@@ -125,9 +126,9 @@ export async function stageInstallPayload({ root, stage }) {
   return { manifest, missing };
 }
 
-async function validateStage(stage) {
+async function validateStage(stage, platform) {
   const result = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--experimental-vm-modules", path.join(stage, "scripts", "verify-install.mjs"), "--root", stage], { windowsHide: true });
+    const child = spawn(process.execPath, ["--experimental-vm-modules", path.join(stage, "scripts", "verify-install.mjs"), "--root", stage, "--platform", platform], { windowsHide: true });
     let stdout = "", stderr = "";
     child.stdout.on("data", data => { stdout += data; });
     child.stderr.on("data", data => { stderr += data; });
@@ -144,13 +145,19 @@ async function validateStage(stage) {
 }
 
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.length && (args.length !== 2 || args[0] !== "--platform" || !["win32", "linux", "darwin"].includes(args[1]))) {
+    throw new Error("Use node scripts/package.mjs [--platform win32|linux|darwin].");
+  }
+  const platform = args[1] || process.platform;
+  selectInstallManifest(JSON.parse(await readFile(path.join(ROOT, "install.json"), "utf8")), platform);
   const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf-8"));
   const stage = path.join(OUT, `aiplay-studio-${pkg.version}`);
   if (path.relative(path.resolve(ROOT), path.resolve(OUT)) !== "dist") throw new Error("Package output escaped its expected dist folder.");
   await rm(OUT, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
 
-  const { missing } = await stageInstallPayload({ root: ROOT, stage });
+  const { missing } = await stageInstallPayload({ root: ROOT, stage, platform });
 
   /* WHICH BUILD IS IN THE ZIP. A packaged install has no .git, so the three
    * facts server/version.js would have read from it are written here instead.
@@ -159,7 +166,7 @@ async function main() {
   await writeFile(path.join(stage, "server", "version.gen.json"), `${JSON.stringify(stampForPackage(), null, 2)}
 `);
   console.log(`  stamped ${versionLine()}`);
-  await validateStage(stage);
+  await validateStage(stage, platform);
 
   // ---- the check that makes the allow-list trustworthy --------------------
   const shipped = await walk(stage);
@@ -186,12 +193,14 @@ async function main() {
   }
   console.log("  ✓ no dev-server scripts, no credentials helper, no remote-shell calls");
 
-  const zip = path.join(OUT, `aiplay-studio-${pkg.version}.zip`);
+  const zip = path.join(OUT, `aiplay-studio-${pkg.version}.${platform === "linux" ? "tar.gz" : "zip"}`);
   await new Promise((resolve, reject) => {
     // PowerShell's Compress-Archive: present on every Windows since 8.1, so the
     // packager needs nothing installed.
-    const p = spawn("powershell", ["-NoProfile", "-Command",
-      `Compress-Archive -Path '${stage}\\*' -DestinationPath '${zip}' -Force`], { windowsHide: true });
+    const p = platform === "linux"
+      ? spawn("tar", ["-czf", zip, "-C", OUT, path.basename(stage)], { windowsHide: true })
+      : spawn("powershell", ["-NoProfile", "-Command",
+        `Compress-Archive -Path '${stage}\\*' -DestinationPath '${zip}' -Force`], { windowsHide: true });
     let err = "";
     p.stderr.on("data", (d) => (err += d));
     p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(err || `exit ${c}`))));

@@ -3,6 +3,10 @@
 AIPLAY Studio writes and renders music on your own computer. No account, no
 upload, no credits, no per-song cost.
 
+**Linux:** use the [desktop installer](docs/LINUX_INSTALL.md). It bundles Node.js
+and adds AIPLAY Studio to the application menu. The Windows native YuE2 GGUF
+quickstart below is a separate, Windows-only runtime path.
+
 ## Start with YuE2 music only
 
 **Same public repository, two launch modes—not a separate YuE2 edition.**
@@ -940,22 +944,24 @@ need that pack.
 
 ## Other platforms
 
-Studio is tested on Windows only, and it is honest to say the other platforms are
-untested rather than unsupported.
+**Linux:** use the [Linux installer](docs/LINUX_INSTALL.md), with a private Node
+runtime and application-menu shortcut. Native CI covers package installation,
+repair, launcher/server startup and keeping user files on removal. GPU inference
+and individual model workflows need separate hardware validation.
 
-**macOS is out.** Not a packaging problem — the music model's first stage
-requires CUDA, and Apple silicon has none.
+**macOS:** a packaged installer is not available yet. Core Studio and ComfyUI
+have macOS paths, but Apple-specific model support needs testing. CUDA-only
+workflows do not run locally on Apple GPUs. The automatic native YuE2 GGUF
+runtime installer currently targets Windows x64.
 
-**Linux with an NVIDIA card should work.** Nobody has tested it yet. The launcher
-and its exe are Windows-only, so you run setup and the server yourself. No source
-file needs editing:
+**Linux source installs:** with Node.js 20 or newer installed, run:
 
 ```
 node scripts/setup.mjs
 ```
 
 ```
-npm install --omit=dev && npm start
+npm ci --omit=dev --ignore-scripts && npm start
 ```
 
 Setup looks for the folder that holds `ComfyUI/` (or asks for it), then records
@@ -970,8 +976,9 @@ AIPLAY_RIG=/path/to/folder-holding-ComfyUI AIPLAY_PYTHON=/path/to/python npm sta
 
 `AIPLAY_RIG` is the folder that contains `ComfyUI/`, not ComfyUI itself.
 
-Everything else — the model catalogue, the download logic, the backend check — is
-platform-neutral. If you get it running, the project would like to hear about it.
+The engine installer has Linux NVIDIA, AMD, Intel and CPU paths. Driver support,
+model compatibility and optional native tools vary by platform; report those
+separately from whether Studio's launcher starts.
 
 ---
 

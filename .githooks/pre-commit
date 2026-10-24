@@ -12,6 +12,13 @@
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
 node --check scripts/verify-install.mjs || exit 1
+node --check scripts/install-manifest.mjs || exit 1
+node --check installer/linux/bootstrap.mjs || exit 1
+node --check scripts/build-linux-installer.mjs || exit 1
+node --test server/linux-bootstrap_test.js server/linux-installer_test.js || exit 1
+# Native package acceptance is opt-in on disposable Linux runners; the offline
+# transaction/integrity tests above always run on every development platform.
+node --test server/linux-native-installer_test.js || exit 1
 node --experimental-vm-modules --test server/install-payload_test.js || exit 1
 # Sound output contracts: old cache bytes, transparent unity, PCM headroom.
 node --test server/daw/output-mode_test.js || exit 1

@@ -449,6 +449,7 @@ static class Fixture {
     Directory.CreateDirectory(Path.Combine(checkedStage, "server"));
     Directory.CreateDirectory(Path.Combine(checkedStage, "launcher"));
     File.Copy(args[3], Path.Combine(checkedStage, "scripts", "verify-install.mjs"));
+    File.Copy(Path.Combine(Path.GetDirectoryName(args[3]), "install-manifest.mjs"), Path.Combine(checkedStage, "scripts", "install-manifest.mjs"));
     File.WriteAllText(Path.Combine(checkedStage, "install.json"), "{\\\"include\\\":[\\\"server\\\",\\\"launcher\\\",\\\"shared\\\"]}");
     File.WriteAllText(Path.Combine(checkedStage, "package.json"), "{\\\"type\\\":\\\"module\\\"}");
     File.WriteAllText(Path.Combine(checkedStage, "launcher", "launcher.mjs"), "export {};");

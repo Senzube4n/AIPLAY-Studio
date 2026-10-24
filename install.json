@@ -29,8 +29,17 @@
     "worker/runpod-worker.js",
     "shared/model-profiles.js",
     "shared/model-bundles.js",
-    "scripts/verify-install.mjs"
+    "scripts/verify-install.mjs",
+    "scripts/install-manifest.mjs"
   ],
+  "platforms": {
+    "linux": {
+      "omit": [
+        "AIPLAY Studio.exe",
+        "AIPLAY Studio.cmd"
+      ]
+    }
+  },
   "exclude": [
     "*.md",
     "*_test.js",
