@@ -65,13 +65,17 @@ jobs:
         shell: pwsh
     env:
       CI: 'true'
-      AIPLAY_APPDATA: ${{ runner.temp }}/aiplay-windows-ci-profile
       # This job is intentionally unsigned. No certificate or password is requested.
       AIPLAY_SIGN_SHA1: ''
       AIPLAY_SIGN_PFX: ''
       AIPLAY_SIGN_PASSWORD: ''
       AIPLAY_SIGN_TIMESTAMP: ''
     steps:
+      - name: Set the disposable Studio profile on the runner
+        run: |
+          $profilePath = Join-Path $env:RUNNER_TEMP 'aiplay-windows-ci-profile'
+          "AIPLAY_APPDATA=$profilePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Check out the exact workflow commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
