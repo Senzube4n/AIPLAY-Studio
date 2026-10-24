@@ -102,6 +102,13 @@ before allowing it. No protection settings need to be disabled for this route.
 Setup 1.5 removes the self-delete-on-close feature and uses locked npm installation
 without dependency lifecycle scripts. These changes do not imply antivirus approval.
 
+Windows battery monitoring is off until you explicitly enable **Settings > Battery
+Safe > stop on battery**. Older saved `batterySafe: true` defaults do not enable
+its PowerShell reader. Turning it off stops the reader immediately; an unavailable
+reading never stops generation. Enabling it still uses Windows PowerShell and may
+trigger a security product's command-line detection. Other Windows helpers (for
+example GPU readings or credential protection) are separate from battery monitoring.
+
 ## The full Studio installation
 
 The rest of this guide describes the original, ComfyUI-backed full suite. Its

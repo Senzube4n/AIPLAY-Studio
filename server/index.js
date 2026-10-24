@@ -457,7 +457,7 @@ import * as configLib from "./config.js";
 import { seedScore } from "./music/seed.js";
 import { appVersion, versionLine } from "./version.js";
 import { checkUpdates, lastCheck, updateSentence } from "./updates.js";
-import { BatteryGuard, watchPower } from "./power.js";
+import { BatteryGuard, PowerMonitor, batterySafeEnabled } from "./power.js";
 /* THE MINORS RULE (docs/SAFETY.md): sexual content involving minors is refused
  * at every door, whatever the model, the agent or the setting. */
 import { onRefusal, safetyRefusal, assertSafe, bodyOfError } from "./safety/refusal.js";
@@ -4646,14 +4646,22 @@ const server = http.createServer(async (req, res) => {
      * power comes back; `allow: false` withdraws that; `stopNow` stops at once. */
     if (p === "/api/power") {
       if (req.method === "POST") {
+        if (req.lanClient || !sameOriginLocalJson(req)) return json(res, 403, { error: "Battery Safe changes require Studio on this PC." });
         const b = await readBody(req);
         let save = false;
-        if (typeof b.batterySafe === "boolean") { config.power.batterySafe = b.batterySafe; save = true; }
+        if (typeof b.batterySafe === "boolean") {
+          config.power.batterySafe = b.batterySafe;
+          // Only this explicit switch opts Windows into starting its reader.
+          if (process.platform === "win32") config.power.windowsMonitoring = b.batterySafe;
+          powerMonitor.setEnabled(batterySafeEnabled(config.power));
+          save = true;
+        }
         if (Number.isInteger(b.graceMinutes) && b.graceMinutes >= 1 && b.graceMinutes <= 60) { config.power.graceMinutes = b.graceMinutes; save = true; }
         if (typeof b.allow === "boolean") batteryGuard.allow(b.allow);
         if (b.stopNow === true) await stopForBattery("You pressed Stop");
-        if (save) savePrefs();
+        if (save) powerPrefsError = await savePrefs() ? null : "Battery Safe changed for this session, but settings could not be saved; the previous setting may return after restart.";
         await powerTick();
+        if (save && powerPrefsError) return json(res, 500, { ...powerSnapshot(), error: powerPrefsError });
       }
       return json(res, 200, powerSnapshot());
     }
@@ -14013,10 +14021,23 @@ batch.on("update", () => push(jobs.snapshot()));
 let powerNow = { known: false, onBattery: false, hasBattery: false, percent: null };
 const batteryGuard = new BatteryGuard();
 let powerBusy = false;
+let powerPrefsError = null;
+const powerMonitor = new PowerMonitor((r) => {
+  const was = powerNow.onBattery;
+  powerNow = r;
+  if (!r.known) {
+    powerBusy = false;
+    batteryGuard.update({ power: r, busy: false, enabled: false, graceMs: 0 });
+  }
+  if (r.known && r.onBattery !== was) console.log(r.onBattery ? `  [battery] running on battery${r.percent != null ? ` (${r.percent}%)` : ""}` : "  [battery] back on mains power");
+  powerTick().catch(() => {});
+});
 
 function powerSnapshot() {
   return {
-    batterySafe: config.power.batterySafe, graceMinutes: config.power.graceMinutes,
+    batterySafe: batterySafeEnabled(config.power), graceMinutes: config.power.graceMinutes,
+    monitoring: { platform: process.platform, enabled: powerMonitor.enabled, state: powerMonitor.state },
+    settingsError: powerPrefsError,
     ...powerNow, busy: powerBusy, ...batteryGuard.snapshot(),
   };
 }
@@ -14055,9 +14076,12 @@ async function powerTick() {
   try {
     /* Only ask the engine when the answer can matter: on mains, with Battery
      * Safe off, or with the person's go-ahead, nothing will be stopped. */
-    const watch = powerNow.onBattery && config.power.batterySafe && !batteryGuard.consent;
-    powerBusy = watch ? await gpuWorkRunning() : false;
-    const r = batteryGuard.update({ power: powerNow, busy: powerBusy, enabled: config.power.batterySafe, graceMs: config.power.graceMinutes * 60_000 });
+    const enabled = batterySafeEnabled(config.power);
+    const watch = powerNow.onBattery && enabled && !batteryGuard.consent;
+    const busy = watch ? await gpuWorkRunning() : false;
+    // A setting or sensor result can change while engine status is pending.
+    powerBusy = !!(busy && powerNow.known && powerNow.onBattery && batterySafeEnabled(config.power) && !batteryGuard.consent);
+    const r = batteryGuard.update({ power: powerNow, busy: powerBusy, enabled: batterySafeEnabled(config.power), graceMs: config.power.graceMinutes * 60_000 });
     if (r.stop) {
       await stopForBattery(`Running on battery for ${config.power.graceMinutes} minute${config.power.graceMinutes === 1 ? "" : "s"}`);
       powerBusy = false;
@@ -14103,14 +14127,9 @@ server.listen(config.uiPort, LAN.on ? "0.0.0.0" : "127.0.0.1", async () => {
    * second". The launcher sets AIPLAY_OPEN=1; anything else driving this server
    * (tests, headless runs, a restart in place) leaves it unset and keeps its
    * browser to itself. */
-  /* Battery Safe: a reading every ten seconds, and a countdown check every
-   * five so the on-screen timer and the stop are never a reading late. */
-  watchPower((r) => {
-    const was = powerNow.onBattery;
-    powerNow = r;
-    if (r.onBattery !== was) console.log(r.onBattery ? `  [battery] running on battery${r.percent != null ? ` (${r.percent}%)` : ""}` : "  [battery] back on mains power");
-    powerTick().catch(() => {});
-  });
+  /* Battery Safe: Windows starts no battery helper until explicitly enabled
+   * in Settings; old saved defaults are not an opt-in. */
+  powerMonitor.setEnabled(batterySafeEnabled(config.power));
   setInterval(() => { if (powerNow.onBattery) powerTick().catch(() => {}); }, 5000).unref();
 
   if (process.env.AIPLAY_OPEN === "1") {
@@ -14234,8 +14253,10 @@ server.listen(config.uiPort, LAN.on ? "0.0.0.0" : "127.0.0.1", async () => {
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, async () => {
+    powerMonitor.dispose();
     console.log("\n  shutting the engine down…");
     await comfy.stop();
     process.exit(0);
   });
 }
+process.once("exit", () => powerMonitor.dispose());

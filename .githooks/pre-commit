@@ -1054,6 +1054,7 @@ node --test server/router/router_test.js || exit 1
 # Your own LoRAs on the Video screen reach both video graphs.
 node --test server/video_lora_test.js || exit 1
 node --test server/power_test.js || exit 1
+node --test server/power-startup_test.js || exit 1
 node --test server/ui-kit_test.js || exit 1
 node --check web/ui.js || exit 1
 node --check web/battery.js || exit 1

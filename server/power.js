@@ -12,7 +12,8 @@
  *
  * Where the reading comes from:
  *   Windows  GetSystemPowerStatus, via .NET's SystemInformation.PowerStatus in
- *            one long-lived PowerShell. A UPS on USB reports through the same
+ *            one long-lived PowerShell, only after explicit Windows opt-in.
+ *            A UPS on USB reports through the same
  *            call (Windows shows it as a battery), which is the point: that is
  *            the desktop whose power actually goes out.
  *   Linux    /sys/class/power_supply: a "Mains" supply that is online, or a
@@ -26,6 +27,72 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const UNKNOWN = Object.freeze({ known: false, onBattery: false, hasBattery: false, percent: null });
+
+/** Old saved Battery Safe preferences do not opt Windows into a process reader. */
+export function batterySafeEnabled(power, platform = process.platform) {
+  return power?.batterySafe === true && (platform !== "win32" || power?.windowsMonitoring === true);
+}
+
+/** Own at most one reader, and forget readings from a disabled generation. */
+export class PowerMonitor {
+  #onReading;
+  #watch;
+  #options;
+  #enabled = false;
+  #state = "off";
+  #epoch = 0;
+  #stop = null;
+  #disposed = false;
+
+  constructor(onReading, { watch = watchPower, platform = process.platform, everySec = 10 } = {}) {
+    this.#onReading = onReading;
+    this.#watch = watch;
+    this.#options = { platform, everySec, windowsMonitoring: platform === "win32" };
+  }
+
+  get enabled() { return this.#enabled; }
+  get state() { return this.#state; }
+
+  setEnabled(value) {
+    const enabled = value === true;
+    if (this.#disposed || enabled === this.#enabled) return;
+    const epoch = ++this.#epoch;
+    this.#enabled = enabled;
+    const stop = this.#stop;
+    this.#stop = null;
+    try { stop?.(); } catch { /* a failed reader may already be gone */ }
+    this.#state = enabled ? "checking" : "off";
+    this.#onReading({ ...UNKNOWN });
+    if (!enabled || this.#disposed || epoch !== this.#epoch) return;
+    try {
+      const stopReader = this.#watch((reading) => {
+        if (this.#disposed || !this.#enabled || epoch !== this.#epoch) return;
+        this.#state = reading?.known === true ? "ready" : "unavailable";
+        this.#onReading(reading?.known === true ? reading : { ...UNKNOWN });
+      }, this.#options);
+      // The factory may report synchronously and cause the caller to disable.
+      if (this.#disposed || !this.#enabled || epoch !== this.#epoch) {
+        try { stopReader?.(); } catch { /* already gone */ }
+      } else this.#stop = stopReader;
+    } catch {
+      if (this.#disposed || !this.#enabled || epoch !== this.#epoch) return;
+      this.#state = "unavailable";
+      this.#onReading({ ...UNKNOWN });
+    }
+  }
+
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#enabled = false;
+    this.#state = "off";
+    ++this.#epoch;
+    const stop = this.#stop;
+    this.#stop = null;
+    try { stop?.(); } catch { /* already gone */ }
+    this.#onReading({ ...UNKNOWN });
+  }
+}
 
 /** One line of the Windows reader: `PowerLineStatus|BatteryChargeStatus|BatteryLifePercent`. */
 export function parseWindows(line) {
@@ -123,7 +190,7 @@ export class BatteryGuard {
 
 /* ── the readers ─────────────────────────────────────────────────────────── */
 
-function windowsReader(onReading, everySec) {
+function windowsReader(onReading, everySec, spawnProcess) {
   /* One PowerShell for the life of the app rather than one per reading: a
    * PowerShell start costs a noticeable burst of CPU, and this runs all day.
    * It watches the Studio's own process and leaves when that is gone, so a
@@ -139,31 +206,37 @@ function windowsReader(onReading, everySec) {
     `  Start-Sleep -Seconds ${everySec}`,
     "}",
   ].join("\n");
-  let child = null, stopped = false, restarts = 0, buf = "";
-  const start = () => {
-    child = spawn("powershell.exe",
+  let child = null, stopped = false, finished = false, buf = "";
+  const unavailable = () => {
+    if (stopped || finished) return;
+    finished = true;
+    buf = "";
+    onReading({ ...UNKNOWN });
+  };
+  try {
+    child = spawnProcess("powershell.exe",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
       { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    child.on("error", unavailable);
+    child.on("exit", () => { child = null; unavailable(); });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d) => {
+      if (stopped || finished) return;
       buf += d;
       let i;
-      while ((i = buf.indexOf("\n")) >= 0) {
+      while (!stopped && !finished && (i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1);
         if (line.trim()) onReading(parseWindows(line));
       }
     });
-    child.on("error", () => {});
-    child.on("exit", () => {
-      child = null;
-      /* A few restarts, then give up and say "unknown": a reader that keeps
-       * dying must not become a process spawned every minute forever. */
-      if (!stopped && restarts++ < 5) setTimeout(() => { if (!stopped) start(); }, 60_000).unref();
-      else if (!stopped) onReading({ ...UNKNOWN });
-    });
+  } catch { unavailable(); }
+  // A blocked or failed reader stays unavailable. Off then On is an explicit
+  // retry; restarting it automatically could repeatedly trigger an AV alert.
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    try { child?.kill(); } catch { /* already gone */ }
   };
-  start();
-  return () => { stopped = true; try { child?.kill(); } catch { /* already gone */ } };
 }
 
 async function readLinux(root = "/sys/class/power_supply") {
@@ -182,9 +255,13 @@ const readMac = () => new Promise((resolve) => {
 /**
  * Start reading the power state every `everySec` seconds. Calls `onReading`
  * with `{ known, onBattery, hasBattery, percent }`; returns a stop function.
+ * Windows requires explicit `windowsMonitoring: true`, even for direct callers.
  */
-export function watchPower(onReading, { everySec = 10, platform = process.platform } = {}) {
-  if (platform === "win32") return windowsReader(onReading, everySec);
+export function watchPower(onReading, { everySec = 10, platform = process.platform, windowsMonitoring = false, spawnProcess = spawn } = {}) {
+  if (platform === "win32") {
+    if (windowsMonitoring !== true) { onReading({ ...UNKNOWN }); return () => {}; }
+    return windowsReader(onReading, everySec, spawnProcess);
+  }
   const read = platform === "darwin" ? readMac : platform === "linux" ? readLinux : null;
   if (!read) { onReading({ ...UNKNOWN }); return () => {}; }
   let busy = false;

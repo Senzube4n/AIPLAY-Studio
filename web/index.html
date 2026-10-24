@@ -5440,12 +5440,13 @@
       <!-- Battery Safe. Wired by web/battery.js; the logic is server/power.js. -->
       <section class="pcard" id="set-power" data-nav="Battery Safe">
         <h3>Battery Safe</h3>
-        <p class="pcard-sub">If the power goes out mid-generation (laptop unplugged, UPS took over), a countdown starts and the work stops cleanly before the battery dies.</p>
+        <span id="batMonitor" hidden class="chip" role="status"></span>
+        <p class="pcard-sub">When enabled, Battery Safe stops generation after a countdown if this computer switches to battery power.</p>
         <div class="params">
           <label for="qBatSafe">stop on battery</label>
           <span class="pv"><select id="qBatSafe" class="sel2">
-            <option value="1">On (recommended)</option>
-            <option value="0">Off</option>
+            <option value="1">On</option>
+            <option value="0" selected>Off</option>
           </select></span>
 
           <label for="qBatGrace">stop after</label>

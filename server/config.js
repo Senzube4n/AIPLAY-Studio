@@ -2173,11 +2173,12 @@ export const config = {
     embedRecord: true,
   },
 
-  /* Battery Safe (server/power.js). On by default: when a generation runs on
-   * battery (a laptop unplugged, a desktop whose UPS took over) it is stopped
-   * after `graceMinutes` unless the person says to keep going. */
+  /* Battery Safe (server/power.js). Windows monitoring needs its own explicit
+   * opt-in: older settings saved batterySafe:true even without a choice, and
+   * must not start the PowerShell reader just by opening Studio. */
   power: {
     batterySafe: true,
+    windowsMonitoring: false,
     graceMinutes: 5,
   },
 
@@ -2537,6 +2538,7 @@ export const PREF_PATHS = [
   ["provenance", "showBadges", (v) => typeof v === "boolean"],
   ["provenance", "embedRecord", (v) => typeof v === "boolean"],
   ["power", "batterySafe", (v) => typeof v === "boolean"],
+  ["power", "windowsMonitoring", (v) => typeof v === "boolean"],
   ["power", "graceMinutes", (v) => Number.isInteger(v) && v >= 1 && v <= 60],
 ];
 

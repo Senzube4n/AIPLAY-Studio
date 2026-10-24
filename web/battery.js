@@ -56,11 +56,18 @@ async function refresh() {
 
 async function send(patch) {
   try {
-    power = await (await rawFetch("/api/power", {
+    const response = await rawFetch("/api/power", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-    })).json();
-  } catch { /* server restarting */ }
+    });
+    const next = await response.json();
+    power = response.ok === false && typeof next.batterySafe !== "boolean"
+      ? { ...power, settingsError: next.error || "Battery Safe could not be changed." }
+      : next;
+  } catch {
+    power = { ...power, settingsError: "Battery Safe could not be confirmed; reconnect to check the current setting." };
+  }
   paint();
+  paintSettings();
   return power;
 }
 
@@ -196,19 +203,35 @@ let settingsWired = false;
 function paintSettings() {
   const safe = document.getElementById("qBatSafe");
   const grace = document.getElementById("qBatGrace");
+  const monitor = document.getElementById("batMonitor");
+  const note = document.getElementById("batNote");
   if (!safe || !grace || !power) return;
   if (!settingsWired) {
     settingsWired = true;
     safe.onchange = () => send({ batterySafe: safe.value === "1" });
     grace.onchange = () => send({ graceMinutes: Number(grace.value) });
   }
-  if (document.activeElement !== safe) safe.value = power.batterySafe === false ? "0" : "1";
+  if (document.activeElement !== safe || power.settingsError) safe.value = power.batterySafe === false ? "0" : "1";
   if (document.activeElement !== grace) {
     const m = String(power.graceMinutes || 5);
     if (![...grace.options].some((o) => o.value === m)) grace.add(new Option(`${m} minutes on battery`, m));
     grace.value = m;
   }
   grace.disabled = power.batterySafe === false;
+  const windows = power.monitoring?.platform === "win32";
+  const state = power.monitoring?.state;
+  if (monitor) {
+    monitor.hidden = !power.settingsError && (state === "ready" || !state);
+    monitor.className = `chip${power.settingsError || state === "unavailable" ? " warn" : state === "checking" ? " busy" : ""}`;
+    monitor.textContent = power.settingsError ? "Settings error" : state === "off" ? "Monitoring off" : state === "checking" ? "Checking battery" : state === "unavailable" ? "Battery status unavailable" : "";
+  }
+  if (note) {
+    note.textContent = windows
+      ? "Enabling Battery Safe uses Windows PowerShell to read battery status."
+      : "You can keep generating on battery from the warning until the power comes back.";
+    if (state === "unavailable") note.textContent = "Battery status is unavailable, so automatic stopping is inactive.";
+    if (power.settingsError) note.textContent = power.settingsError;
+  }
 }
 
 /* Every five seconds for the state, every second for the clock while one runs. */
