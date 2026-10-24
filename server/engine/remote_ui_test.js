@@ -11,6 +11,60 @@ import { remoteAceShelf, remoteYueCheckpoints } from './remote-models.js';
 import { workflowEvidenceKey, curatedArtifactKey } from './workflow-evidence.js';
 import { MODEL_BUNDLES } from '../../shared/model-bundles.js';
 
+test('beginner management actions follow confirmed lifecycle state and selected-computer installation',()=>{
+ const js=read('web','cloud-computer.js');
+ const source=js.slice(js.indexOf('export function cloudManagementState'),js.indexOf('function chooseFlow')).replaceAll('export ','');
+ const {cloudManagementState:view,currentFlowReply:reply,cloudReplyContext:context}=runInNewContext(source+'\n({cloudManagementState,currentFlowReply,cloudReplyContext})');
+ const running={podId:'one',pod:{status:'RUNNING'},phase:'ready',worker:{connectionReady:true,workload:{known:true,busy:false}}};
+ const cases=[
+  [null,'empty',false,false],[{...running,providerUncertain:true},'uncertain',false,false],
+  [{...running,pod:{status:'EXITED'}},'stopped',true,false],
+  [{...running,pod:{status:'STARTING'}},'starting',false,false],
+  [{...running,operation:{type:'start'}},'starting',false,false],
+  [{...running,operation:{type:'stop'}},'stopping',false,false],
+  [{...running,operation:{type:'stop',stage:'uncertain'}},'uncertain',false,false],
+  [{...running,issue:{message:'Invalid account key'}},'failed',false,true],
+  [{...running,worker:{connectionReady:false}},'offline',false,false],
+  [{...running,worker:{connectionReady:true,workload:{known:false,busy:true}}},'failed',false,false],
+  [{...running,worker:{connectionReady:true,workload:{known:true,busy:true}}},'generating',false,true],
+  [running,'ready',false,true],
+ ];
+ for(const [s,state,start,stop] of cases){const v=view(s,{ready:true});assert.equal(v.state,state);assert.equal(v.canStart,start);assert.equal(v.canStop,stop);if(state==='stopped'||state==='uncertain')assert.equal(v.canGenerate,false);}
+ for(const state of ['downloading','verifying','installing'])assert.equal(view(running,{bundles:[{state}]}).state,'installing');
+ assert.equal(view({...running,podId:null},{ready:true}).canGenerate,false);
+ assert.equal(view({...running,worker:{connectionReady:true}},{ready:true}).state,'activity_unknown','older workers must not look idle when work cannot be observed');
+ assert.equal(view(running,{ready:true,installation:{stage:'failed'}}).state,'ready','a repaired live worker does not inherit a historical installer failure');
+ assert.match(view({...running,pod:{status:'EXITED'}}).recovery,/storage continues billing/);
+ assert.match(view({...running,providerUncertain:true}).recovery,/Shutdown is not confirmed/);
+ const selection={music:'ace15-xl-sft',pictures:'sdxl-turbo'},data={podId:'one',selection};
+ assert.equal(reply(running,'one',selection,data),true);
+ for(const patch of [{podId:'two'},{pod:{status:'EXITED'}},{providerUncertain:true},{operation:{type:'stop'}},{worker:{connectionReady:false}},{worker:{connectionReady:true,pending:true}}])assert.equal(reply({...running,...patch},'one',selection,data),false);
+ assert.equal(reply(running,'one',{music:'ace15-xl-turbo'},data),false);
+ assert.notEqual(context(running),context({...running,pod:{status:'EXITED'}}));
+ assert.notEqual(context(running),context({...running,pod:{status:'RUNNING',startedAt:'new-session'}}));
+ assert.match(js,/epoch !== flowEpoch/);
+ const html=read('web','index.html');assert.match(html,/id="cloudFlowWhereTab"/);assert.doesNotMatch(html,/id="cloudFlowReadyTab"/);
+ for(const id of ['cloudReadyFinish','cloudReadyNow','cloudReadyCheck','cloudReadyStorageRates','cloudPlanReview'])assert.ok(html.includes(`id="${id}"`));
+ assert.match(read('web','setup-plan.js'),/Changing this plan does not switch the running app/);
+});
+
+test('guided setup paints before account, computer and model data have loaded',()=>{
+ const js=read('web','cloud-computer.js'),nodes=new Map();
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,textContent:'',children:[],classList:{toggle(){}},setAttribute(){},replaceChildren(){},append(){}});return nodes.get(id);};
+ const helpers=js.slice(js.indexOf('export function cloudGoalReady'),js.indexOf('function chooseFlow')).replaceAll('export ','');
+ const paint=js.slice(js.indexOf('function paintFlow('),js.indexOf('function paintSelectedReadiness'));
+ runInNewContext(helpers+'\n'+paint+'\npaintFlow(null);',{$:node,actionError:'Availability could not be verified.',accountConfigured:false,accountBalance:null,flowModels:null,flowPage:null,planningTarget:'runpod',cloudGoal:'all',setupOverride:null,automaticInstall:null,working:false,getSetupPlan:()=>null,chip(){},money:()=> 'Unavailable',paintInstallation(){},document:{querySelectorAll:()=>[],createElement:()=>node('dynamic')}});
+ assert.equal(node('cloudFlowGoal').hidden,false);assert.equal(node('cloudFlowGoalNext').disabled,true);assert.equal(node('cloudFlowReady').hidden,true);
+ assert.equal(node('cloudFlowIssue').hidden,false);assert.match(node('cloudFlowIssue').textContent,/Availability/);
+});
+
+test('a failed review remains visible after read-only reconciliation repaints the computer',async()=>{
+ const js=read('web','cloud-computer.js'),source=js.slice(js.indexOf('async function perform('),js.indexOf('async function init('));
+ const result=await runInNewContext(source+'\n(async()=>{await perform("/review");return {actionError,working};})()',{
+  working:false,activeAction:'',actionError:null,current:{version:1},$:()=>({}),paint(){},api:async action=>{if(action)throw Error('Availability could not be verified.');return {version:1};}
+ });assert.equal(result.actionError,'Availability could not be verified.');assert.equal(result.working,false);
+});
+
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts) => readFileSync(path.join(ROOT, ...parts), "utf8");
 
@@ -101,7 +155,7 @@ test('unique-class evidence preserves the accepted A100 key and node-renumbering
 test('a changed selection cannot inherit another model’s ready flags', () => {
   const js=read('web','cloud-computer.js'),source=js.slice(js.indexOf('export function cloudGoalReady'),js.indexOf('function chooseFlow')).replaceAll('export ','');
   const ready=runInNewContext(source+'\ncloudGoalReady;');
-  const s={pod:{status:'RUNNING'},worker:{connectionReady:true,generationReady:true}};
+ const s={podId:'one',pod:{status:'RUNNING'},worker:{connectionReady:true,generationReady:true}};
   const bundles=[{id:'ace15-xl-sft',state:'ready'},{id:'ace15-turbo',state:'ready'}];
   assert.equal(ready(s,{music:'ace15-xl-sft'},bundles,[{id:'ace15-turbo',workflowValidated:true}]),false);
   assert.equal(ready(s,{music:'ace15-xl-sft'},bundles,[{id:'ace15-xl-sft',workflowValidated:true,inferenceValidated:false}]),true,'workflow readiness enables a test, not an inference acceptance claim');
@@ -298,23 +352,43 @@ function creationRig(post = async () => ({ pod: { id: "new-computer", name: "AIP
     controls.set(id, { value: "", checked: false, disabled: true, hidden: true, textContent: "", selectedOptions: [{ textContent: "Any available" }] });
   for (const [id, value] of [["runpodPodName", "AIPLAY renderer"], ["runpodGpu", "gpu"], ["runpodCloud", "ALL"], ["runpodVolume", "100"]]) controls.get(id).value = value;
   const data = { pods: [], gpus: [{ id: "gpu", name: "Test GPU", stock: "High", pricePerHr: .5 }] };
+  const quote = {cloud:'SECURE',rate:.5};
   let clock = 1000;
   const helpers = runInNewContext(source + "\n({ reviewPod, createReviewedComputer, invalidateCreationReview });", {
-    $: id => controls.get(id), creationBusy: false, creationReview: null, Date: { now: () => clock },
+    $: id => controls.get(id), creationBusy: false, creationReview: null, Date: class extends Date { static now(){return clock;} },
     money: value => `$${value.toFixed(2)}`, loadAccount: async () => {},
+    crypto: {randomUUID:()=> '11111111-1111-4111-8111-111111111111'},
+    getSetupPlan:()=>data.plan,
+    api: async route => {assert.equal(route,'/install/quote');return quote;},
     accountApi: async (route, body) => { calls.push({ route, body }); return route === "/overview" ? data : post(body); },
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     document: { dispatchEvent: event => events.push(event) },
   });
-  return { ...helpers, controls, calls, events, data, advance: ms => { clock += ms; } };
+  return { ...helpers, controls, calls, events, data, quote, advance: ms => { clock += ms; } };
 }
+
+test('automatic creation locks the reviewed provider pool instead of quoting Any available again',async()=>{
+ const r=creationRig();r.controls.set('runpodAutoInstall',{checked:true});await r.reviewPod();
+ assert.equal(r.controls.get('runpodCreateReview').hidden,false);
+ assert.equal(r.controls.get('runpodCloud').value,'SECURE');
+ r.controls.get('runpodCostConfirm').checked=true;await r.createReviewedComputer();
+ const creation=r.calls.find(c=>c.body);assert.equal(creation.body.cloudType,'SECURE');assert.equal(creation.body.expectedPricePerHr,.5);
+});
+
+test('model changes after cost review require renewed approval before creation',async()=>{
+ const r=creationRig();r.data.plan={selection:{music:'ace15-xl-sft'}};await r.reviewPod();
+ r.controls.get('runpodCostConfirm').checked=true;r.data.plan={selection:{music:'ace15-xl-turbo'}};
+ await r.createReviewedComputer();assert.equal(r.calls.filter(c=>c.body).length,0);assert.equal(r.controls.get('runpodCreateReview').hidden,true);
+});
 
 test("computer creation review refreshes prices read-only and includes continuing storage estimates", async () => {
   const r = creationRig(); await r.reviewPod();
   assert.deepEqual(r.calls.map(c => c.route), ["/overview"]);
   assert.equal(r.controls.get("runpodCreatePod").disabled, true);
   assert.equal(r.controls.get("runpodCreateReview").hidden, false);
-  assert.match(r.controls.get("runpodReviewStorage").textContent, /\$12.00\/month while running, \$20.00\/month after stopping/);
+  assert.match(r.controls.get("runpodReviewStorage").textContent, /\$10.00\/month running, \$20.00\/month stopped/);
+  assert.match(r.controls.get("runpodReviewStorage").textContent, /Temporary disk: \$2.00\/month running/);
+  assert.match(r.controls.get('runpodReviewPrice').textContent,/Checked/);
   await r.createReviewedComputer();
   assert.equal(r.calls.filter(c => c.route === "/pods").length, 0, "opening/reviewing is never approval to rent");
   r.data.gpus[0].stock = "None"; await r.reviewPod();
@@ -593,7 +667,7 @@ test('readiness UI separates historical hardware from current model installation
   assert.match(planner,/minimum requirements', 'Not established'/);
 });
 
-test('model connections stay hidden and unwired outside RunPod GPU mode', async () => {
+test('model discovery uses the local provider adapter in Full Studio and RunPod mode, not limited launch modes', async () => {
   const html = read('web', 'index.html');
   assert.match(html, /<section id="set-model-connections" hidden class="pcard" data-nav="Model connections">/);
   const source = read('web', 'model-browser.js').replace(/^import .*;\r?\n/gm, '')
@@ -601,7 +675,7 @@ test('model connections stay hidden and unwired outside RunPod GPU mode', async 
   async function boot(config, statusOK = true) {
     const calls = [], nodes = new Map();
     const element = () => ({ hidden: true, children: [], dataset: {}, listeners: {}, value: 'read-key',
-      addEventListener(type, fn) { this.listeners[type] = fn; }, before() {}, classList: { toggle() {} } });
+      addEventListener(type, fn) { this.listeners[type] = fn; }, before() {}, append() {}, classList: { toggle() {} } });
     const node = id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
     const form = element(), forget = element(); form.dataset.modelKey = 'huggingface'; forget.dataset.modelForget = 'huggingface';
     const input = element(); form.querySelector = () => input;
@@ -614,7 +688,7 @@ test('model connections stay hidden and unwired outside RunPod GPU mode', async 
     } });
     await init(); return { calls, nodes, form, forget, input };
   }
-  for (const config of [{ remoteOnly: false }, { remoteOnly: false, musicOnly: true }, { remoteOnly: false, cloudOnly: true }, {}]) {
+  for (const config of [{ remoteOnly: false, musicOnly: true }, { remoteOnly: false, cloudOnly: true }]) {
     const r = await boot(config);
     assert.deepEqual(r.calls.map(c => c.url), ['/api/status']);
     assert.equal(r.nodes.get('set-model-connections').hidden, true);
@@ -625,7 +699,12 @@ test('model connections stay hidden and unwired outside RunPod GPU mode', async 
   assert.deepEqual(unavailable.calls.map(c => c.url), ['/api/status']);
   const remote = await boot({ remoteOnly: true });
   assert.equal(remote.nodes.get('set-model-connections').hidden, false);
-  assert.deepEqual(remote.calls.map(c => c.url), ['/api/status', '/api/runpod/catalog/connections']);
+  assert.deepEqual(remote.calls.map(c => c.url), ['/api/status', '/api/model-library/connections']);
+  const local = await boot({ remoteOnly: false });
+  assert.equal(local.nodes.get('set-model-connections').hidden, false);
+  assert.deepEqual(local.calls.map(c => c.url), ['/api/status', '/api/model-library/connections']);
+  assert.equal(local.nodes.get('catalogLocation').value, 'local');
+  assert.equal(remote.nodes.get('catalogLocation').value, 'runpod');
   await remote.form.listeners.submit({ preventDefault() {} });
   assert.deepEqual(JSON.parse(remote.calls[2].options.body), { provider: 'huggingface', key: 'read-key' });
   assert.equal(remote.input.value, '');

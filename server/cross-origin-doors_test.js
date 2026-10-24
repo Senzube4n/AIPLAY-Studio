@@ -228,7 +228,7 @@ test("POST /api/settings: foreign requests change nothing, network and device pa
 test("/api/audio: the Comfy API's folder is not reachable, and every file is served sandboxed and unsniffed", async () => {
   const MIME = new Function(`${/const MIME = \{[\s\S]*?\n\};/.exec(INDEX)[0]}\nreturn MIME;`)();
   const body = slice('if (p.startsWith("/api/audio/")) {', "\n    }\n\n    // ---- static");
-  const run = new AsyncFunction("p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", "sendFile", `${body}\nreturn { fellThrough: true };`);
+  const run = new AsyncFunction("url", "p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", "sendFile", `${body}\nreturn { fellThrough: true };`);
   await mkdir(path.join(config.outputDir, "router"), { recursive: true });
   const svg = "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>";
   await writeFile(path.join(config.outputDir, "router", "v.svg"), svg);
@@ -239,7 +239,8 @@ test("/api/audio: the Comfy API's folder is not reachable, and every file is ser
     res.writeHead = (status, head) => { res.status = status; res.head = head; };
     res.resume();
     const done = new Promise((ok) => res.on("finish", ok));
-    const r = await run(p, { method: "GET", headers }, res, json, path, config, stat, MIME, createReadStream, sendFile);
+    const url = new URL(p, 'http://127.0.0.1');
+    const r = await run(url, url.pathname, { method: "GET", url: p, headers }, res, json, path, config, stat, MIME, createReadStream, sendFile);
     if (r?.code) return { status: r.code, head: {} };
     await done;
     return res;
@@ -255,6 +256,10 @@ test("/api/audio: the Comfy API's folder is not reachable, and every file is ser
     assert.equal(r.head["X-Content-Type-Options"], "nosniff", `${p} ${status}: never sniffed into HTML`);
   }
   assert.equal((await get("/api/audio/song.mp3", { range: "bytes=0-9" })).head["Accept-Ranges"], "bytes", "scrubbing still works");
+  assert.equal((await get('/api/audio/song.mp3')).head['Content-Disposition'], undefined, 'ordinary playback stays inline');
+  const saved = await get('/api/audio/song.mp3?download=1');
+  assert.equal(saved.status, 200); assert.match(saved.head['Content-Disposition'], /^attachment; filename\*=UTF-8''song.mp3$/);
+  assert.equal(saved.head['Content-Security-Policy'], 'sandbox'); assert.equal(saved.head['X-Content-Type-Options'], 'nosniff');
 });
 
 /* THE SCORE DOORS run a python on a path the body names: the pitch tracker

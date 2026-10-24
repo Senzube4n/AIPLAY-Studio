@@ -305,7 +305,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         res.once("finish", responseEnded); res.once("close", responseEnded);
       }
       if (url.pathname.startsWith("/v1/cloud")) {
-        if (req.method === "GET" && url.pathname === "/v1/cloud") return sendJSON(res, 200, cloud.snapshot());
+        if (req.method === "GET" && url.pathname === "/v1/cloud") return sendJSON(res, 200, await cloud.status());
         if (req.method === "GET" && url.pathname === "/v1/cloud/storage") {
           if (!cloud.transferring()) return sendJSON(res, 423, { error: "Wait for the current stop or cleanup to finish." });
           transfers++;

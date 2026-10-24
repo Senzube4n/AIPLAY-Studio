@@ -7,7 +7,7 @@ import { musicBatchIdea } from '../web/music-batch-spec.js';
 import { renderMusicBatchIdea, updateMusicBatchField, musicBatchSubmission, syncMusicBatchPlannerFields } from '../web/music-batch-editor.js';
 import { cleanMusicItem } from './batch-music.js';
 
-const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
 const exactLyrics = '\r\n[Verse]\r\nKeep this phrase  \r\n \r\n';
 const exactScore = 'X:1\nM:4/4\nK:C\nC2 D2 E4 |  \n';

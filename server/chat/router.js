@@ -408,6 +408,7 @@ export const ROUTABLE = {
 
   /* clips and video */
   list_clips: null,
+  clip_favorite: null,
   video_quality: null,
   /* Its set path SAVES Video Lab defaults every later render reads (sparse
    * attention on Fast among them), so it asks first, with its own sentence. */

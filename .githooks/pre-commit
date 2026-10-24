@@ -38,6 +38,9 @@ node --check server/local-model-access.js || exit 1
 node --check server/huggingface-login.js || exit 1
 node --check web/local-model-access.js || exit 1
 node --test server/local-model-access_test.js server/local-model-access-ui_test.js server/huggingface-login_test.js || exit 1
+node --check server/music/ace-comfy-input.js || exit 1
+node --check web/ace-music.js || exit 1
+node --test server/ace-music_test.js || exit 1
 node --check server/engine/remote-models.js || exit 1
 node --check server/engine/workflow-evidence.js || exit 1
 node --check web/setup-plan.js || exit 1
@@ -45,6 +48,11 @@ node --check server/engine/model-catalog.js || exit 1
 node --check server/engine/runpod-update.js || exit 1
 node --check server/engine/model-compatibility.js || exit 1
 node --check web/model-browser.js || exit 1
+node --check web/creative-templates.js || exit 1
+node --check web/template-forms.js || exit 1
+node --check server/creative-templates.js || exit 1
+node --check server/model-library.js || exit 1
+node --test server/creative-templates_test.js server/model-library_test.js || exit 1
 node --check web/worker-update.js || exit 1
 node --check worker/model-disk.js || exit 1
 node --check web/full-player-score.js || exit 1
@@ -92,6 +100,9 @@ node --test server/secrets_test.js || exit 1
 node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
 # The launcher favourite (the star) and the system check's settings merge.
 node --test server/launcher-fav_test.js || exit 1
+node --check server/clip-favorites.js || exit 1
+node --test server/clip-favorites_test.js server/mcp-clip-favorites_test.js || exit 1
+node --test server/video-favorites-ui_test.js || exit 1
 node --check web/runpod-integrated.js || exit 1
 node --check web/runpod.js || exit 1
 node --check worker/runpod-worker.js || exit 1

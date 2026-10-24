@@ -63,6 +63,12 @@
 #set-runpod details.more > summary:hover { border-color:var(--primary); }
 #set-runpod details.more > summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
 #set-runpod details.more[open] > summary { border-color:var(--primary); margin-bottom:14px; }
+.setup-journey .setup-steps { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 20px; }
+.setup-journey .setup-steps [aria-pressed="true"], #cloudSetup [aria-label="Plan location"] [aria-pressed="true"] { background:var(--primary); color:var(--on); border-color:var(--primary); }
+.setup-journey .params select { max-width:100%; min-width:0; }
+.setup-journey .params { margin-bottom:12px; }
+#cloudFlowReady { border-top:1px solid var(--edge); margin-top:24px; padding-top:20px; scroll-margin-top:calc(var(--cloud-nav-height,100px) + 110px); }
+#cloudSetup .cloud-flow-box .pv { overflow-wrap:anywhere; }
 #cloudComputerConnection:not([open]) { display:none; }
 @media(max-width:550px) { #cloudSetup { padding:14px; } #cloudSetup .cloud-setup-steps button { padding:9px 11px; } }
 #cloudSetup .cloud-goals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; margin: 16px 0; }

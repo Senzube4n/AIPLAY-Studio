@@ -1702,7 +1702,8 @@ tool list from the live server, so the two cannot drift.
 | `list_fonts` | the system TTF/OTF shelf for the type tool |
 | `list_checkpoints` | the bring-your-own-model shelf |
 | `set_video_engine` | pick LTX or H3, persistently — a decision, not a detail |
-| `make_clip` / `list_clips` | render a clip; each engine's inputs are typed and mismatches are refused with the fix |
+| `make_clip` / `list_clips` | render a clip; list saved clips with `starred` favorites and optional `starred_only` filtering; engine mismatches are refused with the fix |
+| `clip_favorite` | star or unstar an existing clip without changing its media or generation metadata; favorites persist in Studio's data folder |
 | `restyle_clip` | keep a clip's motion, restyle its look, driven by a song's bass |
 | `build_music_video` | lay clips onto the bar lines and write a Studio project |
 | `list_projects` | saved Studio projects |

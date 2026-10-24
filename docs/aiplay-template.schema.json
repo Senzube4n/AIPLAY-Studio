@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aiplay:creative-template:1",
+  "title": "AIPLAY portable creative template v1",
+  "description": "References and settings only. The application performs additional private-data, profile, companion and workflow checks before use.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "name", "preferredLocation", "selection", "settings", "artifacts", "workflows", "references"],
+  "properties": {
+    "format": {"const": "aiplay-template"},
+    "version": {"const": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 80},
+    "description": {"type": "string", "maxLength": 1000},
+    "creator": {"type": "string", "maxLength": 100},
+    "preferredLocation": {"enum": ["local", "runpod"]},
+    "selection": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"music": {"type": "string"}, "pictures": {"type": "string"}, "video": {"type": "string"}}},
+    "settings": {"type": "object", "additionalProperties": false, "properties": {"music": {"$ref": "#/$defs/settings"}, "pictures": {"$ref": "#/$defs/settings"}, "video": {"$ref": "#/$defs/settings"}}},
+    "artifacts": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["relative", "bytes", "sha256"], "properties": {"relative": {"type": "string", "maxLength": 500}, "bytes": {"type": "integer", "minimum": 1, "maximum": 100000000000}, "sha256": {"$ref": "#/$defs/hash"}}}},
+    "workflows": {"type": "object", "additionalProperties": false, "properties": {"music": {"$ref": "#/$defs/hash"}, "pictures": {"$ref": "#/$defs/hash"}, "video": {"$ref": "#/$defs/hash"}}},
+    "references": {"type": "array", "maxItems": 30, "items": {"type": "object", "additionalProperties": false, "required": ["provider", "id", "file", "folder", "bytes", "sha256"], "properties": {"provider": {"enum": ["huggingface", "civitai"]}, "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?$"}, "revision": {"type": "string", "pattern": "^[a-f0-9]{40}$"}, "version": {"type": ["string", "integer"], "pattern": "^[0-9]{1,14}$"}, "file": {"type": "string", "maxLength": 500}, "folder": {"enum": ["checkpoints", "loras", "diffusion_models", "vae", "text_encoders", "upscale_models"]}, "bytes": {"type": "integer", "minimum": 1, "maximum": 100000000000}, "sha256": {"$ref": "#/$defs/hash"}}, "allOf": [{"if": {"properties": {"provider": {"const": "huggingface"}}}, "then": {"required": ["revision"]}}, {"if": {"properties": {"provider": {"const": "civitai"}}}, "then": {"required": ["version"]}}]}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "settings": {"type": "object", "additionalProperties": false, "properties": {
+      "caption": {"type": "string", "maxLength": 8000}, "prompt": {"type": "string", "maxLength": 8000}, "lyrics": {"type": "string", "maxLength": 8000}, "negative": {"type": "string", "maxLength": 8000},
+      "instrumental": {"type": "boolean"}, "codes": {"type": "boolean"}, "duration": {"type": "integer", "minimum": 1, "maximum": 600}, "seconds": {"type": "integer", "minimum": 1, "maximum": 60},
+      "steps": {"type": "integer", "minimum": 1, "maximum": 200}, "cfg": {"type": "number", "minimum": 0, "maximum": 30}, "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295}, "bpm": {"type": "integer", "minimum": 1, "maximum": 300},
+      "width": {"type": "integer", "minimum": 64, "maximum": 4096}, "height": {"type": "integer", "minimum": 64, "maximum": 4096}, "planTemperature": {"type": "number", "minimum": 0, "maximum": 3},
+      "keyscale": {"type": "string", "maxLength": 8000}, "timesignature": {"type": "string", "maxLength": 8000}, "language": {"type": "string", "maxLength": 8000},
+      "lm": {"type": "string", "pattern": "^[^/\\\\:]+\\.safetensors$"}, "dit": {"type": "string", "pattern": "^[^/\\\\:]+\\.safetensors$"}, "checkpoint": {"type": "string", "pattern": "^[^/\\\\:]+\\.safetensors$"}
+    }}
+  }
+}

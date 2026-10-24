@@ -110,10 +110,12 @@ export async function createModelManager({ modelsDir, fetchFn = fetch, bundles =
         callback(null, chunk);
       } });
       await pipeline(Readable.fromWeb(response.body), meter, createWriteStream(part, { flags: append ? "a" : "w" }));
+      live.set(id, { state: 'verifying', downloadedBytes: complete + received });
       if (!await valid(part, spec)) {
         await unlink(part).catch(() => {});
         throw new Error("Downloaded model failed its size or SHA-256 verification; the invalid temporary file was removed.");
       }
+      live.set(id, { state: 'installing', downloadedBytes: complete + received });
       if (bundle.external) { await link(part, finalFile); await unlink(part); }
       else { await unlink(finalFile).catch(() => {}); await rename(part, finalFile); }
       complete += spec.bytes;

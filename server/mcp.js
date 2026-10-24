@@ -3371,19 +3371,33 @@ export const TOOLS = [
 
   {
     name: "list_clips",
-    description: "Every clip and imported media file, newest first, with what made it. h3_checkpoint is the saved checkpoint receipt (requestedBuild, ranBuild, file, reference, fallback), or null for clips without one.",
+    description: "Clips and imported media, newest first, with starred favorites and what made each file. Set starred_only for favorites. h3_checkpoint is the saved checkpoint receipt (requestedBuild, ranBuild, file, reference, fallback), or null for clips without one.",
     inputSchema: {
       type: "object",
-      properties: { limit: { type: "integer" } },
+      properties: { limit: { type: "integer" }, starred_only: { type: "boolean", description: "Return only starred favorites, before applying the limit." } },
       additionalProperties: false,
     },
     async run(a) {
       const d = await api("GET", "/api/clips");
-      return (d.clips || []).slice(0, Math.max(1, Number(a.limit) || 40)).map((c) => ({
-        name: c.name, track: c.track, seconds: c.meta?.clipSeconds ?? null,
+      if (d.error) throw new Error(d.error);
+      return (d.clips || []).filter((c) => !a.starred_only || c.starred === true)
+        .slice(0, Math.max(1, Number(a.limit) || 40)).map((c) => ({
+        name: c.name, starred:c.starred === true, track: c.track, seconds: c.meta?.clipSeconds ?? null,
         source: c.meta?.source ?? "generated", prompt: c.meta?.prompt ?? null,
         h3_checkpoint: c.meta?.h3Checkpoint ?? null,
       }));
+    },
+  },
+
+  {
+    name: "clip_favorite",
+    description: "Star or unstar an existing library clip or imported media file. Saves a personal favorite without changing the media or its generation metadata.",
+    inputSchema: { type:"object",required:["name","starred"],properties:{name:{type:"string"},starred:{type:"boolean"}},additionalProperties:false },
+    async run(a) {
+      if (typeof a.starred !== 'boolean') throw new Error('starred must be true or false.');
+      const r = await api('POST','/api/clips',{action:'flag',flag:'starred',name:safeName(a.name,'clip'),value:a.starred});
+      if (r.error) throw new Error(r.error);
+      return {name:r.name,starred:r.starred};
     },
   },
 

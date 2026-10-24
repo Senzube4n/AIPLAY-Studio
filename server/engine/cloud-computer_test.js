@@ -73,7 +73,8 @@ async function fixture(t, status = 'EXITED') {
       if (route === '/stop' || route === '/prepare') return { ready: !f.busy, storageVerified: true,
         permit: { podId: f.pod.id, root: '/workspace', expiresAt: Date.now() + 100000000000 } };
       if (route === '/lease') f.leases.push(body.workActive);
-      return { podId: f.pod.id, available: f.available, authorized: true, minutes: body?.minutes ?? 30 };
+      if (route === '/policy') { f.minutes = body.minutes; f.policyWrites = (f.policyWrites || 0) + 1; }
+      return { podId: f.pod.id, available: f.available, authorized: true, minutes: f.minutes ?? 30 };
     },
   };
   f.create = () => createCloudComputer({ dataDir: dir, provider, client: async () => c, now: () => f.now, intervalMs: 0,
@@ -89,6 +90,21 @@ async function fixture(t, status = 'EXITED') {
   };
   return f;
 }
+
+test('existing worker idle choices survive discovery and a different computer does not inherit a pending edit', async t => {
+  const f = await fixture(t, 'RUNNING');
+  assert.equal(f.manager.snapshot().idleMinutes, 30);
+  for (const minutes of [0, 15, 60]) {
+    f.minutes = minutes; await f.manager.refresh();
+    assert.equal(f.manager.snapshot().idleMinutes, minutes);
+    assert.equal(f.policyWrites || 0, 0, 'discovery must not write worker policy');
+  }
+  f.pod.status = 'EXITED'; await f.manager.policy({ minutes: 15 });
+  f.pod = { ...pod('RUNNING'), id: 'other_pod' }; f.minutes = 0;
+  const selected = await f.manager.select('other_pod');
+  assert.equal(selected.policyPending, false); assert.equal(selected.idleMinutes, 0);
+  assert.equal(f.policyWrites || 0, 0); assert.deepEqual(f.actions, []);
+});
 
 test('pending AI updates block guided and legacy starts, and stopped updates share the lifecycle operation lane', async t => {
   const f = await fixture(t); f.updatePending = true;

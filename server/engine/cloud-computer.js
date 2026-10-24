@@ -112,6 +112,9 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
       runtime = { workerId: health.workerId, at: now(), ready: !!(choices.length || setup.bundles?.some(b => b.state === 'ready')) };
     }
     workerStatus.connectionReady = true; workerStatus.generationReady = runtime.ready;
+    // The selected worker owns its existing preference. A deliberately queued
+    // stopped-state edit is applied by the start lane, never by discovery.
+    if (!state.policyPending && [0, 15, 30, 60].includes(workerStatus.minutes)) state.minutes = workerStatus.minutes;
     state.worker = { podId: pod.id, minutes: workerStatus.minutes, authorized: workerStatus.authorized, available: workerStatus.available };
     const local = localActivity();
     await c.cloud('/lease', { podId: pod.id, workActive: !!(local.active || local.queued) });
@@ -218,6 +221,7 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
       if (c.status().jobs.some(j => !TERMINAL.has(j.state))) throw new CloudError('work_active', 'Finish the current work before choosing another computer.');
       const chosen = resourceId(id);
       if ((state.removedPodIds || []).includes(chosen)) throw new CloudError('resource_missing', 'Choose another computer; this saved computer is no longer available.');
+      if (chosen !== state.podId) state.policyPending = false;
       state.podId = chosen; state.lastRemoved = null; state.pod = null; state.worker = null; state.storagePrice = null;
       state.review = null; state.inventory = null; state.issue = null; runtime = null; billing = null; storage = null; workerStatus = null;
       await save(state);

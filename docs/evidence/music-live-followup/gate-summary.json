@@ -1,0 +1,32 @@
+{
+  "baseCommit": "697fd301bef462126e7012d2eac4a4769941835e",
+  "mandatoryGate": {
+    "command": ".githooks/pre-commit",
+    "exitCode": 0,
+    "finishedAt": "2026-10-22T14:51:03.8083053Z",
+    "log": "tmp/cloud-manager/music-followup-mandatory-gate-final.log",
+    "sha256": "72c695edb821372e840999cb17b8fa4bc94f5bdfe235eeeec38e34cf1f5bf506",
+    "bypassed": false
+  },
+  "focused": {
+    "javascriptPassed": 170,
+    "musicIncluded": 20,
+    "audioTaggingAssertionsPassed": 27,
+    "hardwareFitAssertionsPassed": 98
+  },
+  "python": {
+    "environment": "tmp/gate-python/venv",
+    "version": "3.12.14",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "av": "19.0.1",
+    "soundfile": "0.14.0",
+    "pillow": "13.0.0",
+    "opencv": "5.0.0",
+    "torch": "2.14.1+cpu",
+    "torchaudio": "2.11.0+cpu",
+    "cuda": false
+  },
+  "liveHardwareTesting": false,
+  "billableOperations": false
+}

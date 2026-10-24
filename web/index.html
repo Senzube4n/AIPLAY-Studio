@@ -43,6 +43,7 @@
   <!-- RunPod GPU mode (web/runpod-integrated.js). -->
   <link rel="stylesheet" href="runpod-integrated.css">
   <link rel="stylesheet" href="cloud-computer.css">
+  <link rel="stylesheet" href="model-library.css">
   <!-- The ⓘ in every screen's header and the panel it opens. AFTER modelfit.css,
        because the verdict chips inside that panel ARE modelfit's `.fitbadge` —
        one badge, one palette, so the Models screen and this panel cannot show
@@ -529,6 +530,19 @@
     </div>
     </details>
 
+    <div id="aceMusicPanel" hidden>
+      <div id="aceDuration" class="params"></div>
+      <div class="cta"><span id="aceMusicChip" class="chip" role="status">Check model setup</span>
+        <button id="aceMusicPreset" type="button" class="edtool" hidden>30s A100 test preset</button></div>
+      <details class="more"><summary>Model setup</summary>
+        <p id="aceMusicMessage" class="hint"></p>
+        <div id="aceMusicReadiness" class="params"></div>
+        <span id="aceMusicHistory" class="chip" hidden></span>
+        <button id="aceMusicCheck" class="edtool" type="button">Check setup</button>
+        <button id="aceMusicSetup" class="edtool" type="button">Open setup</button>
+      </details>
+    </div>
+
     <details class="adv sbox">
       <summary>More Options</summary>
 
@@ -713,6 +727,7 @@
         <label for="aPlanTemp">Planner temperature</label><span class="pv"><input id="aPlanTemp" class="sv" type="number" min="0" max="2" step="0.05" placeholder="0.85"></span>
         <label for="aLm">Planner model</label><span class="pv"><select id="aLm" class="sel2"></select></span>
       </div>
+      <div id="aceLocalInputs">
       <b class="subhead">LoRA</b>
       <div class="params">
         <label for="aLora">LoRA</label><span class="pv"><select id="aLora" class="sel2"><option value="">none</option></select></span>
@@ -730,6 +745,7 @@
         <span class="sp meta" id="aCoverState"></span>
       </div>
       <p class="hint" id="aCoverHint">The song you give becomes a timbre and style reference (experimental: ComfyUI's "Set Reference Audio"), rendered in your style and lyrics; how closely it keeps the melody has not been measured here. The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
+      </div>
     </details>
 
     <!-- MELODY & SCORE (renamed 2026-09-24 from a second "Advanced"). The Music screen's words are
@@ -950,6 +966,7 @@
       <div class="music-batch-entry" id="musicBatchEntry">
         <button class="btn2" type="button" id="btnMusicBatch">Batch &amp; schedule</button>
         <button class="edtool" type="button" id="btnToOvernight" title="Save this song and its settings in the batch planner">Add to batch</button>
+        <button class="edtool sm" type="button" id="musicSaveTemplate">Save as template</button>
       </div>
       <p class="ctanote" id="ctaNote">—</p>
       <button class="edtool" type="button" id="musicOutcomeDetails" hidden>Failure details</button>
@@ -1440,6 +1457,7 @@
     <div class="ctawrap">
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
+        <button class="edtool sm" type="button" id="videoSaveTemplate">Save as template</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
         <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Production → Video clips → Ask friend.">Ask friend</button>
       </div>
@@ -1738,6 +1756,7 @@
       <div class="ctawrap">
       <div class="cta">
         <button class="btn primary wide" type="button" id="imgGo">Make image</button>
+        <button class="edtool sm" type="button" id="picturesSaveTemplate">Save as template</button>
         <button class="btn2" type="button" id="imgAskFriend" title="Prepare one Qwen image job per verified friend; rendering starts on their machine only after they accept it.">Ask friend</button>
       </div>
       <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
@@ -2739,6 +2758,7 @@
         <input class="line" id="clipSearch" placeholder="Search clips by prompt or track…" spellcheck="false">
         <select id="clipFilter" class="sel2 sm">
           <option value="all">Everything</option>
+          <option value="starred">★ Starred</option>
           <!-- The assembled films, not the shots that went into them. renderTimeline
                stamps source:"timeline" on its output, so this is a fact the library
                already holds rather than a guess from the filename. -->
@@ -2788,6 +2808,7 @@
             <span class="hint" id="clipViewMeta"></span>
             <span class="cvsp"></span>
             <span class="cvpos hint" id="clipViewPos"></span>
+            <button class="edtool sm clipstar" type="button" id="clipViewStar" data-cstar="" aria-pressed="false" aria-label="Favourite video" title="Favourite video">☆</button>
             <button class="edtool sm" id="clipViewPrev" data-cvprev title="Previous (Up arrow)">&uarr;</button>
             <button class="edtool sm" id="clipViewNext" data-cvnext title="Next (Down arrow)">&darr;</button>
             <button class="edtool sm" data-cvclose title="Escape">&#10005;</button>
@@ -4954,6 +4975,18 @@
         <div class="cta"><button class="btn sm" type="button" id="ltxAccessInstall">Install LTX</button><button class="edtool sm" type="button" id="ltxAccessCancel" hidden>Cancel download</button><span class="chip" id="ltxAccessState" role="status" aria-live="polite">Not connected</span></div>
         <p class="hint" id="ltxAccessMessage"></p>
       </section>
+      <div id="modelLibraryBrowser"></div>
+      <section class="pcard" id="creativeTemplates">
+        <h3>Creative templates</h3><p class="pcard-sub">Save a setup, preview a shared template, then review its models before use.</p>
+        <div class="cta"><button class="edtool" id="templateNew" type="button">Save as template</button><button class="edtool" id="templateImport" type="button">Import template</button><button class="edtool" id="templateBackup" type="button">Export all templates</button><input id="templateFile" type="file" accept=".json,.aiplay-template.json" hidden></div>
+        <p class="hint" role="status" id="templateStatus"></p><div id="templateList"></div>
+        <div id="templateEditor" hidden>
+          <div class="params"><label for="templateName">name</label><span class="pv"><input class="line" id="templateName" maxlength="80"></span><label for="templateDescription">description</label><span class="pv"><input class="line" id="templateDescription" maxlength="1000"></span><label for="templateCreator">creator (optional)</label><span class="pv"><input class="line" id="templateCreator" maxlength="100"></span><label for="templateLocation">preferred location</label><span class="pv"><select class="sel2" id="templateLocation"><option value="local">My Computer</option><option value="runpod">RunPod</option></select></span></div>
+          <details class="more"><summary>Generation settings</summary><textarea class="line" id="templateSettings" rows="8" aria-label="Template generation settings"></textarea></details>
+          <div class="cta"><button class="edtool" id="templatePreview" type="button">Preview template</button><button class="edtool" id="templateSave" type="button">Save template</button><button class="edtool" id="templateLoad" type="button" disabled>Load into form</button><button class="edtool" id="templateExport" type="button">Export template</button><button class="edtool" id="templateClose" type="button">Close</button></div>
+          <div id="templateReview" aria-live="polite"></div>
+        </div>
+      </section>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>
@@ -5540,13 +5573,14 @@
           <summary><span class="cloudnum">3</span> RunPod GPU</summary>
           <p class="hint">One worker connection for music, pictures and video.</p>
           <p class="hint" id="runpodModeHint">Open RunPod GPU from the launcher to configure your worker and account.</p>
+          <div id="cloudLocalPlan" hidden></div>
           <div id="cloudSetup" hidden>
             <div class="cloud-flow-head"><div><h4>Cloud computer</h4><span class="hint">RunPod / Easy setup</span></div><span class="chip" id="cloudFlowAccount">Checking account</span></div>
             <nav class="cloud-setup-steps" role="tablist" aria-label="Cloud setup">
               <button class="edtool sm" id="cloudFlowGoalTab" role="tab" aria-controls="cloudFlowGoal" data-cloud-page="goal" type="button">1. Your goal</button>
-              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">2. Costs</button>
-              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">3. Install AI</button>
-              <button class="edtool sm" id="cloudFlowReadyTab" role="tab" aria-controls="cloudFlowReady" data-cloud-page="ready" type="button">4. Ready</button>
+              <button class="edtool sm" id="cloudFlowWhereTab" role="tab" aria-controls="cloudFlowWhere" data-cloud-page="where" type="button">2. Location</button>
+              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">3. Review</button>
+              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">4. Install</button>
             </nav>
             <span id="cloudSetupStatus" class="chip busy" role="status">Checking setup</span>
             <p class="hint" id="cloudSetupHint"></p>
@@ -5561,6 +5595,12 @@
               </fieldset>
               <div id="cloudModelPlan"></div>
               <p class="hint" id="cloudFlowGoalNote">One connection for music, pictures and video.</p>
+              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button">Choose location</button></div>
+            </section>
+            <section id="cloudFlowWhere" role="tabpanel" aria-labelledby="cloudFlowWhereTab" hidden>
+              <h3>Where will it run?</h3>
+              <div class="cta" role="group" aria-label="Plan location"><button class="edtool" id="cloudWhereLocal" type="button" aria-pressed="false">My Computer</button><button class="edtool" id="cloudWhereRunpod" type="button" aria-pressed="true">RunPod</button></div>
+              <p class="hint" id="cloudWhereHint">Changing a plan does not switch the running app; choose its mode in the launcher.</p>
               <details class="more" id="cloudFlowAccountDetails" open><summary>Connect account</summary>
             <div id="cloudSetupAccount" hidden>
               <div id="cloudSetupAccountFields"></div>
@@ -5572,16 +5612,20 @@
               </details>
             </div>
               </details>
-              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button" disabled>Continue to costs</button></div>
+              <div class="cta"><button class="btn sm" id="cloudFlowWhereNext" type="button">Review setup</button></div>
             </section>
             <section id="cloudFlowCosts" role="tabpanel" aria-labelledby="cloudFlowCostsTab" hidden>
-              <h3>Review your costs</h3>
+              <h3>Review your setup</h3>
+              <div id="cloudPlanReview" class="cloud-flow-box params"></div>
+              <div id="cloudRunpodReview">
               <div class="cloud-flow-box params">
                 <label>computing</label><span class="pv" id="cloudFlowCostRate">Choose a computer below</span>
                 <label>saved storage</label><span class="pv" id="cloudFlowCostStorage">Shown before approval</span>
                 <label>session estimate</label><span class="pv" id="cloudFlowCostSession">Not started</span>
               </div>
               <p class="hint">GPU rental runs during setup; saved storage stays billed after stopping.</p>
+              <p class="hint" id="cloudIdleRecommendation">Automatic stop: 30 idle minutes recommended; enable it after connecting AI.</p>
+              <div id="cloudReviewProtection"></div>
             <div id="cloudSetupComputer" hidden>
               <div id="cloudSetupComputerFields"></div>
               <p class="hint" id="cloudSetupNoComputer" hidden>No cloud computer yet. Create one below to continue.</p>
@@ -5589,7 +5633,9 @@
               <div id="cloudSetupCreateFields" hidden></div>
             </div>
               <div class="cta"><button class="btn sm" id="cloudFlowCostStart" type="button" hidden>Review start price</button>
-                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to AI</button></div>
+                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to install</button></div>
+              </div>
+              <div id="cloudLocalReview" hidden><p class="hint">Use My Computer in the launcher, then install selected models in Models.</p><button class="edtool" type="button" id="cloudOpenLocal">Open local setup</button></div>
             </section>
             <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
               <h3 id="cloudInstallTitle">Setting up your AI</h3>
@@ -5609,8 +5655,11 @@
               </details>
               <details class="more" id="cloudModelBrowser">
                 <summary>Browse more models</summary>
-                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
-                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">On RunPod</button></nav>
+                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Browse models and LoRAs for your selected computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
+                <div class="params"><label for="catalogLocation">computer</label><span class="pv"><select class="sel2" id="catalogLocation"><option value="local">My Computer</option><option value="runpod">RunPod</option></select></span></div>
+                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" id="catalogCuratedTab" type="button">AIPLAY curated</button><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">Installed models</button><button class="edtool" id="catalogCustomTab" type="button">Custom reference</button></nav>
+                <section id="catalogCurated" hidden></section>
+                <section id="catalogCustom" hidden><p class="hint">Look up a Hugging Face repository or Civitai model ID; a download alone does not establish workflow support.</p><div class="cta"><input class="line" id="catalogCustomId" aria-label="Provider model reference" placeholder="creator/model or Civitai ID"><button class="edtool" id="catalogCustomOpen" type="button">Review reference</button></div></section>
                 <form id="catalogSearchForm"><div class="catalog-search"><input class="line" id="catalogQuery" aria-label="Search models" placeholder="Search models or styles"><button class="btn sm" type="submit">Search</button></div>
                   <div class="catalog-filters"><label>create<select class="sel2" id="catalogTask"><option value="pictures">Pictures</option><option value="video">Video</option><option value="music">Music</option><option value="all">Anything</option></select></label><label>type<select class="sel2" id="catalogType"><option value="all">Models + LoRAs</option><option value="checkpoint">Checkpoints</option><option value="lora">LoRAs</option></select></label><label>sort<select class="sel2" id="catalogSort"><option value="popular">Most downloaded</option><option value="newest">Newest</option></select></label><label>base model<input class="line" id="catalogBase" placeholder="Any (Civitai)"></label></div>
                 </form>
@@ -5620,10 +5669,10 @@
                 <section id="catalogDetail" class="catalog-detail" hidden><button class="edtool sm" id="catalogDetailClose" type="button">Close details</button><h3 id="catalogName"></h3><p class="hint" id="catalogPurpose"></p>
                   <div class="params"><label for="catalogVersion">version</label><span class="pv"><select class="sel2" id="catalogVersion"></select></span><label for="catalogFile">file</label><span class="pv"><select class="sel2" id="catalogFile"></select></span><label for="catalogFolder">save as</label><span class="pv"><select class="sel2" id="catalogFolder"><option value="checkpoints">Checkpoint</option><option value="loras">LoRA</option><option value="diffusion_models">Diffusion model</option><option value="vae">VAE</option><option value="text_encoders">Text encoder</option><option value="upscale_models">Upscaler</option></select></span><label>download size</label><span class="pv" id="catalogSize"></span><label>base model</label><span class="pv" id="catalogCompatibility"></span><label>licence</label><span class="pv" id="catalogLicense"></span></div>
                   <span class="chip" id="catalogFit" role="status">Compatibility unverified</span><p class="hint" id="catalogFitNote">Review the creator’s workflow and required components.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
-                  <p class="hint" id="catalogDestination"></p><p class="hint">Your saved provider key is sent to your worker for this transfer only.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to RunPod</button><p class="hint" id="catalogInstallState" role="status"></p>
+                  <p class="hint" id="catalogDestination"></p><p class="hint" id="catalogKeyTransfer">Your saved provider key is used only for provider access and the selected transfer.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to selected computer</button><button class="edtool sm" id="catalogSaveTemplate" type="button">Save model reference</button><p class="hint" id="catalogInstallState" role="status"></p>
                 </section>
-                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Models on RunPod</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Deleting a model may affect workflows that use it.</p><div id="catalogDiskList"></div></section>
-                <section id="catalogTransfers" hidden><h4>Downloads on RunPod</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
+                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Installed model files</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Custom files need a supported adapter and workflow before generation.</p><div id="catalogDiskList"></div></section>
+                <section id="catalogTransfers" hidden><h4>Model downloads</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
               </details>
             <div id="cloudSetupAI" hidden>
               <details class="more"><summary>Installation details</summary>
@@ -5650,33 +5699,48 @@
             </div>
             <div id="cloudSetupProtection" hidden>
               <h4>Automatic stop</h4>
-              <p class="hint">A separate shutdown key keeps protection working after AIPLAY closes.</p>
+              <p class="hint">Choose an idle interval; a separate stop key keeps it working after AIPLAY closes.</p>
               <div id="cloudFlowIdleFields" class="params"></div>
               <div id="cloudSetupProtectionFields"></div>
               <div class="cta"><button class="edtool sm" id="cloudSetupSkipProtection" type="button">Keep running when closed</button></div>
+              <details class="more"><summary>What stays protected?</summary><p>Generation, queued jobs, installation, downloads and transfers keep the computer awake. Stopping keeps saved storage and its charges.</p><p>This idle policy is separate from an explicitly approved test deadline. Neither is a provider-enforced spending cap.</p></details>
               <details class="more"><summary>Why another key?</summary>
                 <p>A separate RunPod key is saved on this computer so it can stop safely after AIPLAY closes.
                   Give it permission to read and stop computers; its provider permissions may cover other computers in your account.</p>
               </details>
             </div>
-              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>Continue to Ready</button></div>
+              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>View computer</button></div>
             </section>
-            <section id="cloudFlowReady" role="tabpanel" aria-labelledby="cloudFlowReadyTab" hidden>
+            <section id="cloudFlowReady" aria-label="Your cloud computer" hidden>
               <h3 id="cloudFlowReadyTitle">Your cloud computer</h3>
               <p class="hint" id="cloudFlowReadyGoal"></p>
               <div class="cloud-flow-states"><span class="chip" id="cloudFlowProvider" role="status">Checking computer</span><span class="chip" id="cloudFlowAI" role="status">Checking AI</span></div>
               <div class="cloud-flow-box params">
-                <label>computing</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>GPU rental</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>session compute</label><span class="pv" id="cloudReadySession">Unavailable</span>
+                <label>storage after stopping</label><span class="pv" id="cloudReadyStorageAfter">Unavailable</span>
                 <label>automatic stop</label><span class="pv" id="cloudFlowReadyStop">Needs setup</span>
                 <label>your saved files</label><span class="pv" id="cloudFlowReadyFiles">Not checked</span>
-                <label>storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
               </div>
+              <details class="more"><summary>Models and billing</summary><div class="params">
+                <label>graphics card</label><span class="pv" id="cloudReadyGpu">Not selected</span>
+                <label>installed models</label><span class="pv" id="cloudReadyModels">Not checked</span>
+                <label>provider checked</label><span class="pv" id="cloudReadyQuote">Not checked</span>
+                <label>current storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
+                <label>session allowance</label><span class="pv" id="cloudReadyAllowance">Not set for this session</span>
+                <label>provider billing</label><span class="pv" id="cloudReadyBilling">Not loaded</span>
+              </div></details>
+              <p class="hint" id="cloudReadyRecovery" role="status"></p>
+              <details class="more"><summary>Storage and spending</summary><p class="hint" id="cloudReadyStorageRates"></p><p class="hint" id="cloudReadyDeadline"></p><p class="hint">Session estimates exclude storage; spending alerts and shutdown policies are not provider billing caps.</p></details>
               <div class="cta"><button class="btn sm" id="cloudFlowSample" type="button" disabled>Try a sample</button>
                 <button class="btn sm" id="cloudFlowReadyStart" type="button" hidden>Start computer</button>
                 <button class="edtool sm" id="cloudFlowReadyStopButton" type="button" hidden>Stop computer</button>
+                <button class="edtool sm" id="cloudReadyFinish" type="button" hidden>Finish job and stop</button>
+                <button class="edtool sm danger" id="cloudReadyNow" type="button" hidden>Stop now</button>
+                <button class="edtool sm" id="cloudReadyCheck" type="button">Check status</button>
                 <button class="edtool sm" id="cloudFlowRepair" type="button">Set up AI</button></div>
               <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
-              <p class="hint">Stopping computing keeps saved storage and its charges.</p>
+              <p class="hint">Stop preserves saved files; GPU rental ends when RunPod confirms the computer stopped.</p>
             </section>
             <div class="cta cloud-advanced-button"><button class="edtool" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button></div>
             <details class="more" id="cloudSetupEdit" hidden><summary>Change setup</summary>
@@ -6329,6 +6393,7 @@
 <script type="module" src="runpod-integrated.js"></script>
 <script type="module" src="cloud-computer.js"></script>
 <script type="module" src="model-browser.js"></script>
+<script type="module" src="creative-templates.js"></script>
 <script type="module" src="worker-update.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->

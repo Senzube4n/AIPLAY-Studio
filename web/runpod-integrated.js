@@ -16,6 +16,7 @@ import { getSetupPlan } from './setup-plan.js';
  * goes directly to the local backend secret store and is never returned here. */
 
 import { revealSetting } from './settings-sections.js';
+import { templateFormFields, assertTemplateFields } from './template-forms.js';
 
 const $ = (id) => document.getElementById(id);
 const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
@@ -120,8 +121,8 @@ function renderSetup(data) {
     const name = document.createElement("b"); name.textContent = bundle.label;
     const button = document.createElement("button"); button.type = "button"; button.className = "btn sm";
     button.dataset.modelInstall = bundle.id;
-    button.textContent = bundle.state === "ready" ? "Verified" : bundle.state === "downloading" ? "Downloading…" : bundle.state === "paused" ? "Resume" : bundle.state === "failed" ? "Repair" : "Install";
-    button.disabled = ["ready", "downloading"].includes(bundle.state);
+    button.textContent = {ready:'Verified',downloading:'Downloading…',verifying:'Verifying…',installing:'Installing…',paused:'Resume',failed:'Repair'}[bundle.state] || 'Install';
+    button.disabled = ["ready", "downloading", 'verifying', 'installing'].includes(bundle.state);
     const detail = document.createElement("p"); detail.className = "hint";
     detail.textContent = `${bytes(bundle.totalBytes)} · ${bundle.state}`;
     detail.title = bundle.description;
@@ -135,7 +136,7 @@ function renderSetup(data) {
       const access = document.createElement('input'); access.type = 'password'; access.className = 'line'; access.autocomplete = 'off'; access.dataset.modelToken = bundle.id;
       access.placeholder = 'Accept access on the model page, then paste a read token'; label.append(access); row.append(label);
     }
-    if (["downloading", "paused"].includes(bundle.state)) {
+    if (["downloading", "paused", 'verifying', 'installing'].includes(bundle.state)) {
       const progress = document.createElement("progress"); progress.max = bundle.totalBytes; progress.value = bundle.downloadedBytes;
       progress.title = `${bytes(bundle.downloadedBytes)} of ${bytes(bundle.totalBytes)}`; row.append(progress);
     }
@@ -257,6 +258,7 @@ async function loadCreationChoices() {
 async function reviewPod() {
   if (creationBusy) return;
   const input = creationInput();
+  const planKey = JSON.stringify(getSetupPlan('runpod')?.selection);
   invalidateCreationReview();
   $("runpodReviewPod").disabled = true;
   $("runpodCreateState").textContent = "Checking current price and availability…";
@@ -273,12 +275,16 @@ async function reviewPod() {
       const quote = await api('/install/quote', { gpuTypeId: input.gpuTypeId, cloudType: input.cloudType });
       gpu.pricePerHr = quote.rate;
       if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error('Choices changed. Review the price again.');
+      if (!['SECURE','COMMUNITY'].includes(quote.cloud)) throw Error('The quoted provider pool could not be verified. Review again.');
+      // Pin the reviewed pool. A later fresh quote cannot silently move pools.
+      input.cloudType = quote.cloud; $('runpodCloud').value = quote.cloud;
     }
-    creationReview = { input, rate: gpu.pricePerHr, at: Date.now() };
-    $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)}/hour for computing`;
+    if (planKey !== JSON.stringify(getSetupPlan('runpod')?.selection)) throw Error('Selected models changed. Review the setup again.');
+    creationReview = { input, rate: gpu.pricePerHr, at: Date.now(), planKey };
+    $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)}/hour for computing. Checked ${new Date(creationReview.at).toLocaleTimeString()}.`;
     $("runpodReviewDetails").textContent = `${input.name} · ${input.volumeInGb} GB saved storage · ${$("runpodCloud").selectedOptions[0].textContent}`;
     // Published volume/container rates, checked 2026-10-17. These are estimates, not billing caps.
-    $("runpodReviewStorage").textContent = `Storage estimate: ${money((input.volumeInGb + 20) * .10)}/month while running, ${money(input.volumeInGb * .20)}/month after stopping.`;
+    $("runpodReviewStorage").textContent = `Saved storage: ${money(input.volumeInGb * .10)}/month running, ${money(input.volumeInGb * .20)}/month stopped. Temporary disk: ${money(20 * .10)}/month running (estimates).`;
     $("runpodCreateReview").hidden = false;
     $("runpodCreateState").textContent = input.installAI ? 'Review the costs, including rental during AI installation.' : 'Manual AI service installation is required after creation.';
     $('runpodCreatePod').textContent = input.installAI ? 'Create and install AI' : 'Create and start computer';
@@ -289,6 +295,7 @@ async function createReviewedComputer() {
   if (creationBusy) return;
   const review = creationReview;
   if (!review || !$("runpodCostConfirm").checked || Date.now() - review.at > 300000
+    || review.planKey !== JSON.stringify(getSetupPlan('runpod')?.selection)
     || JSON.stringify(review.input) !== JSON.stringify(creationInput())) {
     invalidateCreationReview();
     $("runpodCreateState").textContent = "Review the current price and confirm it before creating a computer.";
@@ -568,6 +575,15 @@ function prepareSelectedSample(detail) {
 
 async function init() {
   if (!$("imgRenderWhere") || !$("vidRenderWhere")) return;
+  document.addEventListener('aiplay:setup-model',async event=>{
+    const {target,profile,settings}=event.detail||{};
+    if(target!=='runpod'||!settings||!profile||profile.category==='music')return;
+    try {const s=await(await fetch('/api/status')).json();if(!s.config?.remoteOnly)return;
+    const fields=templateFormFields(profile.category,{...profile.settings,...settings},target);assertTemplateFields(document,fields);
+    prepareCloudSample(profile.category,document,profile);
+    for(const [id,value]of Object.entries(fields)){const n=$(id);n.value=String(value);n.dispatchEvent(new Event(n.tagName==='SELECT'?'change':'input',{bubbles:true}));}
+    }catch(e){setState(e.message,true);}
+  });
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;

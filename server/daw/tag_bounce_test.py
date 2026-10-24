@@ -146,6 +146,53 @@ if HAVE_IO:
     ok("tag() sets the output stream's format from the input's",
        "out_s.format = in_s.codec_context.format.name" in src)
 
+    print("\n  -- ACE metadata preserves effective settings and unrelated existing tags --")
+    import importlib.util
+    module_spec = importlib.util.spec_from_file_location("acceptance_tag_audio", TAG_AUDIO)
+    tagger = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(tagger)
+    ace_path = os.path.join(tmp, "ace-metadata.flac")
+    bounce_like(ace_path, 24)
+    tagger.tag(ace_path, {"ALBUM": "Keep this album", "CUSTOM_NOTE": "Keep this note", "prompt": "old private graph"})
+    ace_meta = {"generator": "ace-step15", "model": "ace-step15", "precision": "bf16", "steps": 50,
+                "cfg": 7, "seed": 20261019, "dit": "acestep_v1.5_xl_sft_bf16.safetensors",
+                "lm": "qwen_4b_ace15.safetensors", "executionTarget": "runpod"}
+    ace_json = os.path.join(tmp, "ace-meta.json")
+    def stamp_ace(meta):
+        with open(ace_json, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh)
+        r = subprocess.run([sys.executable, TAG_AUDIO, ace_path, ace_json], capture_output=True, text=True)
+        return json.loads(r.stdout)
+    result = stamp_ace(ace_meta)
+    ok("ACE tagging succeeds", result.get("ok") is True, str(result))
+    read_back = tagger.read_tags(ace_path)
+    ok("effective ACE sampling steps are 50", read_back.get("steps") == "50", str(read_back))
+    ok("exact ACE BF16 precision survives export", read_back.get("model") == "bf16")
+    ok("exact model and 4B planner survive export", read_back.get("artifact") == ace_meta["dit"] and read_back.get("planner") == ace_meta["lm"])
+    with av.open(ace_path) as media:
+        tags = {k.upper(): v for k, v in media.metadata.items()}
+    ok("existing album and custom note are preserved", tags.get("ALBUM") == "Keep this album" and tags.get("CUSTOM_NOTE") == "Keep this note")
+    ok("remote audio does not claim local execution", "RunPod" in tags.get("COMMENT", "") and "locally" not in tags.get("COMMENT", ""))
+    ok("raw workflow metadata stays stripped", "PROMPT" not in tags and "WORKFLOW" not in tags)
+    ok("24-bit ACE samples remain identical", np.array_equal(sf.read(ace_path, dtype="int32")[0], before))
+    def refuse_rewrite(*args, **kwargs):
+        raise AssertionError("identical metadata must not rewrite the file")
+    original_replace = tagger.replace_retrying
+    tagger.replace_retrying = refuse_rewrite
+    try:
+        tagger.tag(ace_path, {"STEPS": "50", "PRECISION": "bf16"})
+        ok("unchanged metadata skips file replacement", True)
+    finally:
+        tagger.replace_retrying = original_replace
+    result = stamp_ace({**ace_meta, "tier2": False})
+    with av.open(ace_path) as media:
+        tags = {k.upper(): v for k, v in media.metadata.items()}
+    ok("Tier 2 off removes previous sampling/artifact detail", all(k not in tags for k in ["STEPS", "PRECISION", "MODEL_ARTIFACT", "PLANNER_ARTIFACT", "SEED", "PROMPT"]))
+    ok("Tier 2 off keeps unrelated metadata and AI disclosure", tags.get("CUSTOM_NOTE") == "Keep this note" and "AI_DISCLOSURE" in tags)
+    result = stamp_ace({**ace_meta, "precision": None, "steps": None})
+    read_back = tagger.read_tags(ace_path)
+    ok("unknown precision and steps are not invented", read_back.get("model") == "" and read_back.get("steps") == "")
+
     import shutil
     shutil.rmtree(tmp, ignore_errors=True)
 

@@ -65,6 +65,8 @@
 }
 .clipcard .cmrow { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .clipcard .cmrow b { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink); }
+.clipcard .clipstar, .clipview .clipstar { flex: none; cursor: pointer; }
+.clipcard .clipstar[aria-pressed="true"], .clipview .clipstar[aria-pressed="true"] { color: var(--warn); }
 .clipcard .cbadges { display: inline-flex; gap: 4px; flex: none; }
 .clipcard .clipmeta .cbadge { font-size: 9.5px; color: var(--faint); border-color: var(--hair); border-radius: 999px; padding: 1px 7px; }
 .clipcard .cmsub {
