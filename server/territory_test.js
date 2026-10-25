@@ -16,7 +16,7 @@ import { CATALOG } from "./models.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAN = ["server", "web", "docs", "scripts", "examples", "README.md", "INSTALL.md", "DIRECTING.md"];
-const SKIP = /node_modules|[\\/]\.git[\\/]|_test\.js$|\.(png|jpg|jpeg|mp4|flac|wav|json|css|svg|ico)$/;
+const SKIP = /node_modules|[\\/]\.git[\\/]|_test\.js$|\.(png|jpg|jpeg|mp4|flac|wav|json|css|svg|ico|pdf|zip)$/;
 
 // Every phrasing seen in the wild, plus any line naming three or more of the
 // four territories without going through CATALOG.
@@ -29,6 +29,23 @@ const HAND = [
 
 let checks = 0, fails = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { fails++; console.log("  FAIL", msg); } };
+
+// Offline documents embed screenshots. Inspect their prose and scripts, not
+// encoded image bytes; keep line breaks so a finding still names the right line.
+const sourceText = (text) => text.replace(
+  /(\bsrc\s*=\s*)(["'])(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\r\n]+)\2/gi,
+  (_match, prefix, quote, encoded) => prefix + quote + encoded.replace(/[^\r\n]/g, "") + quote,
+);
+const handTypesTerritories = (line) => HAND.some((re) => re.test(line)) || NAMES.filter((n) => line.includes(n)).length >= 3;
+
+const imageFixture = '<img alt="screenshot" src="data:image/jpeg;base64,EUUKUSA">';
+ok(!handTypesTerritories(sourceText(imageFixture)), "an encoded screenshot is not a territory claim");
+ok(handTypesTerritories(sourceText(imageFixture + '<p>EU, the UK or South Korea</p>')), "prose beside an encoded screenshot is still checked");
+ok(handTypesTerritories(sourceText(imageFixture + '<script>const regions = "EU UK USA";</script>')), "script beside an encoded screenshot is still checked");
+ok(handTypesTerritories(sourceText('European Union, the United Kingdom, the Republic of Korea')), "ordinary source and document territory wording is still caught");
+ok(sourceText('<img src="data:image/jpeg;base64,EU\nUKUSA">\n<p>text</p>').split('\n').length === 3, "encoded images retain diagnostic line numbers");
+ok(SKIP.test('web/guide.pdf') && SKIP.test('web/guide.zip'), "binary document and archive formats are not source text");
+ok(!SKIP.test('web/community-guide/index.html') && !SKIP.test('server/config.js'), "guide HTML and application source remain in the scan");
 
 const rows = CATALOG.filter((c) => Array.isArray(c.region?.excluded) && c.region.excluded.length);
 ok(rows.length >= 1, "catalogue has a territory-limited row");
@@ -50,14 +67,12 @@ for (const top of SCAN) {
     let text;
     try { text = fs.readFileSync(f, "utf8"); } catch { continue; }
     let generated = false;
-    text.split("\n").forEach((line, i) => {
+    sourceText(text).split("\n").forEach((line, i) => {
       if (/MODELS:BEGIN/.test(line)) generated = true;
       if (/MODELS:END/.test(line)) generated = false;
       if (generated) return;
       if (/^\s*(\*|\/\/|#|<!--)/.test(line) || /retired|hand-typed|used to say/i.test(line)) return;
-      const hit = HAND.some((re) => re.test(line));
-      const count = NAMES.filter((n) => line.includes(n)).length;
-      if (hit || count >= 3) {
+      if (handTypesTerritories(line)) {
         ok(false, `${path.relative(ROOT, f)}:${i + 1} hand-types the territory list; derive it from CATALOG: ${line.trim().slice(0, 110)}`);
       }
     });

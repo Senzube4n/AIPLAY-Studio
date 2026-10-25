@@ -19,6 +19,7 @@
   &nbsp;·&nbsp; <a href="https://senzube4n.github.io/AIPLAY-Studio/#quick-tour">31-second Studio tour</a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
+  &nbsp;·&nbsp; <a href="docs/STUDY_GUIDE.md"><b>Community guide</b></a>
   &nbsp;·&nbsp; <a href="docs/YUE2_GGUF.md">YuE2 guide</a>
   &nbsp;·&nbsp; <a href="docs/DEEP_DIVE.md">How it works</a>
   &nbsp;·&nbsp; <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">Source code (for developers)</a>
@@ -68,6 +69,10 @@ licence, shown before installation.
 
 ## Current updates
 
+- **Community study guide:** a 20-page screenshot guide to Linux/macOS/Windows
+  installation, YuE2, H3 reference settings, MOSS options and full projects.
+  Open **Community guide** on Studio's Home screen or **About → Getting started**.
+  [Read the guide and download the offline pack](docs/STUDY_GUIDE.md).
 - **MOSS-Image recipes:** Standard, optional Spectrum and 4/8-step presets,
   Kromoss, and direct 2048 × 2048 HiRes generation. This is a text-to-image
   path; Standard remains MOSS's default. Qwen Image 2.1 remains the automatic

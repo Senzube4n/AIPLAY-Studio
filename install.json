@@ -26,6 +26,11 @@
     "server/index.js",
     "server/config.js",
     "web/index.html",
+    "web/community-guide/index.html",
+    "web/community-guide/guide.pdf",
+    "web/community-guide/directors.md",
+    "web/community-guide/discord-posts.html",
+    "web/community-guide/community-guide-2026-10-25.zip",
     "worker/runpod-worker.js",
     "shared/model-profiles.js",
     "shared/model-bundles.js",
@@ -56,7 +61,8 @@
   ],
   "keep": [
     "LICENSE*",
-    "NOTICE*"
+    "NOTICE*",
+    "directors.md"
   ],
   "preserve": [
     "workflows/custom",

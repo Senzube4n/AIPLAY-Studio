@@ -1006,6 +1006,7 @@ node --test server/modelsearch_test.js || exit 1
 # against its own manifest. The fix for a table failure is
 # `node scripts/models_table.mjs`; for examples, `node scripts/examples.mjs`.
 node server/docs_test.js || exit 1
+node --test server/community-guide_test.js || exit 1
 # THE CREDITS ON THE THANKS PAGE. The half of that page that cannot be read
 # live: nothing in a running copy knows who wrote it, and a downloaded ZIP has
 # no git history to ask. So the names are a table in web/credits.js, the markup

@@ -51,6 +51,10 @@ server/version.archive.json export-subst
 *.css  text=auto eol=lf
 *.json text=auto eol=lf
 *.md   text=auto eol=lf
+# Published community-guide downloads are reviewed and hashed as one pack.
+# Preserve their delivered bytes, including Markdown line endings, in clones.
+web/community-guide/** -text
+web/community-guide/*.pdf binary
 *.sh   text=auto eol=lf
 installer/linux/aiplay-studio text eol=lf
 installer/linux/*.desktop text eol=lf
