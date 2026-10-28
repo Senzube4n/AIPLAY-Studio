@@ -589,7 +589,7 @@ Without ffmpeg the new frames come back as the clip and its record's
 ### `POST /api/video` · `{ "action": "check" }` and what `create` says back
 `{ "action": "check", "prompt", "width", "height", "seconds", "steps",
 "refImages", "refAudios", "persona", "song", "sparse", "fromCover" | "fromUpload" | "toCover" | "toUpload" | "framed",
-"sourceVideo" }` — the plan a `create` with the same body would render on this
+"sourceVideo", "controlMode", "controlStrength", "controlStart", "controlEnd", "modelFile" }` — the plan a `create` with the same body would render on this
 card (server/video-plain.js `videoPlan`), without staging or queueing
 anything: `engine`, `width`, `height`, `seconds`, `steps`, `sparse`, `sampler`,
 `fit` (`sentence` "This size needs about X GB free on the graphics card; you
@@ -619,6 +619,37 @@ clip's status row carries the sentence as `error`, the engine's own text as
 The door takes Studio's own page or a local client only, with a 1 MB body, and
 so does `POST /api/videolab`. MCP: `make_clip` `check_only` (with `notes`),
 `sparse`, and its reply's `warnings`.
+
+**H3 source clip.** `sourceVideo` is a local Library video basename, never a path.
+`controlMode` is `depth` (default), `pose` or `prepared`; prepared means an
+already authored control map and skips the estimator. `controlStrength` accepts
+0–2 (default 1); `controlStart`/`controlEnd` accept 0–1 (defaults 0/1) with
+start strictly before end. They describe the denoising schedule, not trim points.
+Omit all control fields without a source. Both check and create use the same
+validator. Check measures/hashes the source and checks models/node schemas,
+returning `videoControl`, without staging or queuing a run. It also checks the
+selected H3 checkpoint's timestep form against the control patch before
+preprocessing: full-form checkpoints need the full patch; supported curve-form
+checkpoints need the matching curve patch. Unknown or incompatible forms are
+refused without substituting another checkpoint. `videoControl.checkpoint`
+records the resolved file and form; `patchId` and `patchLoader` name the matching
+control patch and loader. These choices are rechecked for the queued job. The source must cover
+the actual H3 frame grid at 24 fps: a five-second request needs 124 frames,
+about 5.167 s. Short footage is refused, never padded. The local built-in H3
+path provides structural guidance, not guaranteed source-pixel or identity
+preservation. Missing dependencies return `needsModel` or `needsNodes` before
+rendering. MCP names these fields `source_video`, `control_mode`,
+`control_strength`, `control_start`, `control_end`. See
+[H3 source clip guidance](docs/H3_VIDEO_CONTROL.md) for framing, dependencies,
+incompatible options and model terms.
+
+**Named video checkpoint.** Optional `modelFile` selects an installed file for
+this request and leaves the saved selection unchanged. Both check and create
+validate it for the selected engine; on H3 it fills both `dit` and `ditRef`.
+Check returns the resolved override in `videoModels` or `null`. MCP `make_clip`
+takes `model_file` and returns only the server-validated checkpoint name as
+`model_file` on a check. A source-control plan reports `fit: null` with an
+unmeasured-memory caveat; it does not inherit the ordinary H3 fit estimate.
 
 **When the video files are not there.** `check`, `create` and `run` first ask
 which engine the files on disk can render (workflow.js `resolveVideoEngine`),

@@ -55,7 +55,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, yue2ComfySamplingReceipt, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, yue2ComfySamplingReceipt, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras, alignFrames } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -73,6 +73,7 @@ import { mossImageStatus } from "./moss-status.js";
 import { mossGenerationProvenance } from "./moss-provenance.js";
 import { createEngineRoutes } from "./engine/routes.js";
 import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
+import { createH3VideoControl, h3ControlOptions } from "./h3-video-control.js";
 import { stageRefModImage } from "./refmod-stage.js";
 import { validateYue2StyleAdapter, yue2StyleAdapterFor, yue2StyleAdapterFromProbe } from "./music/yue2-style-adapters.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
@@ -598,7 +599,11 @@ const batch = new BatchRunner(jobs, {
 });
 // Draws covers only while the music queue is empty — see art.js for why that is
 // a hard requirement rather than politeness.
-const art = new ArtRunner(comfy, jobs);
+const videoControlService = createH3VideoControl({ clipDir: CLIP_DIR, inputDir: config.inputDir,
+  outputDir: config.outputDir, engine: engineDoor, catalog: CATALOG, modelConfig: config });
+const videoControlFailure = (error) => ({ error: error.reason ? error.message : "Video control could not be checked. Verify the source video and local engine, then try again.", reason: error.reason || "control-video",
+  ...(error.needsModel ? { needsModel: error.needsModel } : {}), ...(error.needsNodes ? { needsNodes: error.needsNodes } : {}) });
+const art = new ArtRunner(comfy, jobs, { videoControl: videoControlService });
 /* THE PLAN RUNNERS, the third queue the fresh-engine restart waits for
  * (art.js otherWorkOnEngine): an overnight run in the middle of a step that is
  * not a picture or clip it is waiting on (a music step, or between two), or a
@@ -908,7 +913,9 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
       data: { model: meta?.engine || config.video.engine || null,
               for: file.startsWith("clip:") ? null : file,
               seed: meta?.seed ?? null,
-              derivedFrom: meta?.extendedFrom ? `clips/${meta.extendedFrom}` : null,
+              derivedFrom: meta?.videoControl?.source?.name ? `clips/${meta.videoControl.source.name}`
+                : meta?.extendedFrom ? `clips/${meta.extendedFrom}` : null,
+              videoControl: meta?.videoControl || null,
               op: meta?.extendedFrom ? "extend" : null,
               runId: runId ?? null },
     });
@@ -8683,7 +8690,20 @@ const server = http.createServer(async (req, res) => {
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
           control: !!(b.sourceVideo || b.source_video) });
-        return json(res, 200, { ok: !plan.refusal, engine: gate.engine, enabled: !!config.video.enabled, ...plan });
+        let videoControl = null, videoModels = null;
+        if (!plan.refusal) {
+          let picked;
+          try { picked = await videoModelPatch(b, gate.engine); }
+          catch (error) { picked = { error: error.message }; }
+          if (picked.error) return json(res, 200, { ok: false, engine: gate.engine, refusal: { error: picked.error, reason: "video-model" }, warnings: plan.warnings || [] });
+          videoModels = picked.models || null;
+          try { videoControl = await videoControlService.check({ ...b, ...optionalH3 }, { engineKey: gate.engine,
+            width: plan.width, height: plan.height, fps: videoEngine(gate.engine).fps,
+            frames: alignFrames(plan.seconds, videoEngine(gate.engine).fps, gate.engine), customWorkflow: !!assignedTo("video"),
+            models: videoModels, refImages: plan.refImages || b.refImages || [], refAudios: b.refAudios || [] }); }
+          catch (error) { return json(res, 200, { ok: false, engine: gate.engine, refusal: videoControlFailure(error), warnings: plan.warnings || [] }); }
+        }
+        return json(res, 200, { ok: !plan.refusal, engine: gate.engine, enabled: !!config.video.enabled, ...plan, videoControl, videoModels });
       }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
@@ -8770,54 +8790,13 @@ const server = http.createServer(async (req, res) => {
           return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
         };
 
-        /* ── VIDEO-TO-VIDEO, AND THE MODEL IT NEEDS ─────────────────────────
-         *
-         * ⚠ THE REFUSAL IS THE PLACE TO OFFER THE DOWNLOAD. Asking for this
-         * without the patch is the exact moment somebody learns the feature
-         * exists, so the sentence names the catalogue row, its size and the
-         * tool that fetches it rather than saying the option is unsupported.
-         * The territory clause is named too: it is a patch on H3's weights and
-         * carries H3's Applicable Territory, and finding that out AFTER a
-         * 2.3 GB download would be finding it out too late.
-         */
-        const control = { video: null, patch: null, strength: 1, start: 0, end: 1 };
-        if (b.sourceVideo || b.source_video) {
-          const asked = String(b.sourceVideo || b.source_video);
-          if (asked.includes("..") || asked.includes("/") || asked.includes("\\")) {
-            return json(res, 400, { error: "Name a clip on this machine, not a path.", reason: "control-video" });
-          }
-          if (eng === "ltx") {
-            return json(res, 400, {
-              error: "Video-to-video is H3's path \u2014 LTX has no structural video input. Switch the engine to h3.",
-              reason: "control-engine",
-            });
-          }
-          const row = CATALOG.find((c) => c.id === "videoH3FunControl");
-          /* Readiness is "every file present" (models.js:2954), and this row is
-           * one file — so the check is the file, not a second opinion about it. */
-          const have = row?.files?.length
-            ? (await Promise.all(row.files.map((f) => stat(f.dest).then(() => true).catch(() => false)))).every(Boolean)
-            : false;
-          if (!have) {
-            return json(res, 400, {
-              error: "Driving a render with a whole video needs the H3 Fun ControlNet patch, which is not on this "
-                + "machine yet. It is 2.3 GB, one file. Get it on the Models screen, or with the tool "
-                + "`download_model` id videoH3FunControl \u2014 it is a patch on H3's weights, so it carries H3's "
-                + "territory clause and the Models screen shows that before it fetches a byte.",
-              reason: "needs-model",
-              /* The row, so a screen can offer the button and an assistant can
-               * act without a second round trip to find out what to download. */
-              needsModel: { id: "videoH3FunControl", label: row?.label || null, bytes: row?.files?.[0]?.bytes || null,
-                            tool: "download_model", region: row?.region?.excluded || null },
-            });
-          }
-          control.video = asked;
-          control.patch = path.basename(row.files[0].dest);
-          const num = (x, d, lo, hi) => (Number.isFinite(Number(x)) ? Math.min(hi, Math.max(lo, Number(x))) : d);
-          control.strength = num(b.controlStrength ?? b.control_strength, 1, 0, 2);
-          control.start = num(b.controlStart ?? b.control_start, 0, 0, 1);
-          control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
-        }
+        // Validate options before staging any references; the shared media/node
+        // check below uses the actual render plan in both check and create.
+        let controlOptions;
+        try { controlOptions = h3ControlOptions(b); }
+        catch (error) { return json(res, 400, videoControlFailure(error)); }
+        const control = { video: controlOptions?.source || null, patch: null,
+          strength: controlOptions?.strength ?? 1, start: controlOptions?.start ?? 0, end: controlOptions?.end ?? 1 };
         let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack, personaStaged = null, personaLost = 0;
         /* A song that could not be staged (songstage.js): the soundtrack is
          * refused below, a reference audio is said as a warning. */
@@ -8919,6 +8898,16 @@ const server = http.createServer(async (req, res) => {
           control: !!control.video });
         if (plan.refusal) return json(res, 400, { error: plan.refusal.error, reason: plan.refusal.reason,
           ...(plan.refusal.needsModel ? { needsModel: plan.refusal.needsModel } : {}) });
+        const picked = await videoModelPatch(b, eng);
+        if (picked.error) return json(res, 400, { error: picked.error });
+        let videoControl;
+        try {
+          videoControl = await videoControlService.check({ ...b, ...optionalH3 }, { engineKey: eng,
+            width: plan.width, height: plan.height, fps: videoEngine(eng).fps,
+            frames: alignFrames(plan.seconds, videoEngine(eng).fps, eng), customWorkflow: !!assignedTo("video"),
+            models: picked.models || null, refImages: plan.refImages || refImages || [], refAudios });
+          if (videoControl) control.patch = videoControl.patch;
+        } catch (error) { return json(res, 400, videoControlFailure(error)); }
         /* What the render really carries: the request's references, then the
          * character's (bound in plan.prompt). A character picture that could
          * not be found is said, not dropped unsaid. */
@@ -8935,12 +8924,6 @@ const server = http.createServer(async (req, res) => {
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
          * the vocal while the output plays the real track (measured r=0.984
          * waveform on the freeze). No refusal left on this axis. */
-
-        /* A model file the person named instead of the engine's own, with the
-         * encoder and VAEs to load beside it. Checked against the shelves here,
-         * so a wrong name is a sentence now rather than a failed render later. */
-        const picked = await videoModelPatch(b, eng);
-        if (picked.error) return json(res, 400, { error: picked.error });
 
         const id = `v${Date.now().toString(36)}`;
         const job = art.request({
@@ -8983,6 +8966,7 @@ const server = http.createServer(async (req, res) => {
             controlStrength: control.strength,
             controlStart: control.start,
             controlEnd: control.end,
+            videoControl,
             // Song under the clip, both engines (H3: frozen + anchored = lip-sync).
             audioTrack,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.

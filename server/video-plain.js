@@ -726,7 +726,8 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
   }
 
   /* What this size needs, and the RAM warning, at render time. */
-  const fit = family ? h3SizeFit({ width, height, seconds }, { vramMb: h3?.card?.vramMb ?? null }) : null;
+  const fit = family && !control ? h3SizeFit({ width, height, seconds }, { vramMb: h3?.card?.vramMb ?? null }) : null;
+  if (family && control) notes.push({ id: "control-memory-unmeasured", text: "Video-to-video memory use has not been measured. The ordinary H3 estimate excludes guide extraction and the control patch." });
   if (fit?.over) warnings.push({ id: "fit", text: fit.sentence });
   if (family && h3?.ramWarning) warnings.push({ id: "ram", text: h3.ramWarning });
   if (engineKey === "h3") {

@@ -250,16 +250,20 @@ test("a job of several door runs holds the restart between them (engine/client.j
   });
 });
 
-test("a hold with idleMs lapses when the door has had no run for that long, so work waiting behind the clip lets it go", async () => {
+test("a hold with idleMs lapses when the door has had no run for that long, so work waiting behind the clip lets it go", async (t) => {
+  // status() also reads the ledger from disk; wall-clock I/O must not consume
+  // the short idle window before its freshness assertion.
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
   const release = engine.hold("a chat turn", { idleMs: 60 });
   try {
     assert.deepEqual((await engine.status()).held, ["a chat turn"], "held while fresh");
-    await new Promise((r) => setTimeout(r, 120));
+    now += 120;
     assert.deepEqual((await engine.status()).held, [], "lapsed: no door run for longer than idleMs");
   } finally { release(); }
   const plain = engine.hold("a Reactive Motion look");
   try {
-    await new Promise((r) => setTimeout(r, 120));
+    now += 120;
     assert.deepEqual((await engine.status()).held, ["a Reactive Motion look"], "a hold without idleMs lasts until released");
   } finally { plain(); }
 });

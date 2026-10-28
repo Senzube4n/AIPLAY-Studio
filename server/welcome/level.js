@@ -65,6 +65,7 @@ export const ADVANCED_ADDS = {
     /* Not the song under the clip or Keep my character: Simple shows both
      * since 2026-09-24 (the REWIND A/B, DIRECTING.md §2). */
     { say: "an end frame, and the References box: pictures and sounds by tag", ids: ["vidTo", "vidRefWrap"] },
+    { say: "source clip guidance: depth or pose, strength and timing", ids: ["vidControlMode", "vidControlStrength", "vidControlStart", "vidControlEnd"] },
     { say: "the Video Lab: sizes and side-by-side tests", ids: ["vidLab"] },
   ],
 };

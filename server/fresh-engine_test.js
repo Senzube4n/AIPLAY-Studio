@@ -278,9 +278,9 @@ test("the clip job asks the card, then waits for the whole card, before it resta
   const art = read("./art.js");
   assert.match(art, /const vendor = cardVendor\(\);\s*const budgetMs = clipBudgetMs\(expected, vendor, videoSpeed\.factor\(engine\), engine\);/);
   assert.ok(art.indexOf("if (externalMusicWork.owner) {") > 0
-    && art.indexOf("if (externalMusicWork.owner) {") < art.indexOf("if (clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor })"),
+    && art.indexOf("if (externalMusicWork.owner) {") < art.indexOf("if (!job.videoControl && clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor })"),
     "a music tool on the card is said before any restart (the door would refuse the clip after it)");
-  assert.match(art, /if \(clipNeedsCleanCard\(engine, \{ mode: config\.video\.freeBeforeClip, vendor \}\)\s*&& engineDoor\.ranSinceStart\(\) > 0 && typeof this\.comfy\?\.restart === "function"\) \{/);
+  assert.match(art, /if \(!job\.videoControl && clipNeedsCleanCard\(engine, \{ mode: config\.video\.freeBeforeClip, vendor \}\)\s*&& engineDoor\.ranSinceStart\(\) > 0 && typeof this\.comfy\?\.restart === "function"\) \{/);
   assert.doesNotMatch(art, /vendor: vendorOf\(config\.gpu, config\.torchBackend\) \}\)\s*&& engineDoor/, "never the settings alone");
   assert.match(art, /job\.waitingForQuiet = true;\s*let free = false;\s*try \{\s*free = await waitForQuietEngine\(\{\s*musicBusy: \(\) => !!this\.jobs\?\.current,\s*engineQueue: \(\) => engineDoor\.queue\(\),\s*otherWork: \(\) => this\.#otherWork\(job\),\s*cancelled: \(\) => !!job\.cancelled,/,
     "Bucky's wait, on every card, with the rest of the card read inside it and Stop honoured");
@@ -297,11 +297,11 @@ test("the clip job asks the card, then waits for the whole card, before it resta
 test("a clip that waits is stopped without touching the engine", () => {
   const art = read("./art.js");
   const stopCurrent = art.slice(art.indexOf("  async stopCurrent() {"), art.indexOf("  async stopMine() {"));
-  assert.match(stopCurrent, /if \(job\.waitingForQuiet\) \{\s*job\.cancelled = true; job\.stopping = true; this\.emit\("update"\);\s*return \{/,
+  assert.match(stopCurrent, /if \(job\.waitingForQuiet \|\| job\.controlCpu\) \{\s*job\.cancelled = true; job\.stopping = true; this\.emit\("update"\);\s*return \{/,
     "marked and returned before any interrupt");
   assert.ok(stopCurrent.indexOf("job.waitingForQuiet") < stopCurrent.indexOf("engineDoor.interrupt()"));
   const stopMine = art.slice(art.indexOf("  async stopMine() {"), art.indexOf("  findJob(file, kind) {"));
-  assert.match(stopMine, /if \(job\?\.waitingForQuiet\) \{\s*job\.cancelled = true; job\.stopping = true; out\.stopping = true;/,
+  assert.match(stopMine, /if \(job\?\.waitingForQuiet \|\| job\?\.controlCpu\) \{\s*job\.cancelled = true; job\.stopping = true; out\.stopping = true;/,
     "the Stop button's half ends it too, instead of leaving it to render after the wait");
 });
 

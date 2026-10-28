@@ -10,6 +10,7 @@
  * router, the page and the doc. No card.
  */
 import fs from "node:fs";
+import vm from "node:vm";
 import { videoGraphH3 } from "./workflow.js";
 import { overlapFor, extensionFrames, joinClips, probeClip, makeTestClips } from "./clipjoin.js";
 
@@ -90,7 +91,28 @@ console.log("\n§4  the door, the queue, the tool, the router, the page and the 
   ok("...measures the clip and refuses by reason", /reason: "probe"/.test(index) && /reason: "too-short"/.test(index));
   ok("...stages the source under a content name", /aiplay_cont_\$\{createHash\("sha1"\)/.test(index));
   ok("...and queues a video job that continues it", /continueFrom: \{\n\s+file: staged, frames: probe\.frames/.test(index) && /extendedFrom: name,/.test(index));
-  ok("the record names the source", /derivedFrom: meta\?\.extendedFrom \? `clips\/\$\{meta\.extendedFrom\}` : null,/.test(index));
+  // Execute the actual emitted provenance block: an added control-video source
+  // must not sever a continuation's existing lineage.
+  const provenanceStart = index.indexOf('  // Generated-media registration: a rendered clip is ai-generated video.');
+  const provenanceEnd = index.indexOf('  if (!file.startsWith("clip:")) batch.noteStage', provenanceStart);
+  ok("the clip provenance block is located", provenanceStart >= 0 && provenanceEnd > provenanceStart);
+  const provenance = index.slice(provenanceStart, provenanceEnd);
+  const sourceFor = (meta) => {
+    const notes = [];
+    vm.runInNewContext(provenance, { meta, clip: "result.mp4", file: "clip:test", runId: "run-test",
+      config: { video: { engine: "h3" } }, provNote: (channel, note) => notes.push({ channel, note }) });
+    eq("one generated clip provenance record", [notes.length, notes[0]?.channel, notes[0]?.note.asset],
+      [1, "library", "clips/result.mp4"]);
+    return notes[0]?.note.data;
+  };
+  const continuation = sourceFor({ extendedFrom: "source.mp4" });
+  eq("the record names the continuation source and operation",
+    [continuation.derivedFrom, continuation.op, continuation.runId], ["clips/source.mp4", "extend", "run-test"]);
+  eq("controlled video records its own source", sourceFor({ videoControl: { source: { name: "guide.mp4" } } }).derivedFrom, "clips/guide.mp4");
+  eq("an ordinary clip has no invented source", sourceFor({}).derivedFrom, null);
+  eq("missing metadata has no invented source", sourceFor(undefined).derivedFrom, null);
+  eq("an explicit control source retains priority", sourceFor({ extendedFrom: "source.mp4",
+    videoControl: { source: { name: "guide.mp4" } } }).derivedFrom, "clips/guide.mp4");
   ok("the queue hands the continuation to the graph", /continueFrom: job\.continueFrom \|\| null,/.test(art));
   ok("...joins the result and keeps the new frames beside it", /async function joinContinuation\(job, clip\)/.test(art) && /clip\.replace\(\/\\\.mp4\$\/i, "_new\.mp4"\)/.test(art));
   ok("...never throwing the render away when ffmpeg is absent", /await rename\(kept, fresh\)\.catch\(\(\) => \{\}\);/.test(art));

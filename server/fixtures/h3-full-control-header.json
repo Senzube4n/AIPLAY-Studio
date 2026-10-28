@@ -1,0 +1,787 @@
+{
+  "__metadata__": {
+    "format": "pt"
+  },
+  "control_proj_in.bias": {
+    "dtype": "F32",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      0,
+      21504
+    ]
+  },
+  "control_proj_in.weight": {
+    "dtype": "F32",
+    "shape": [
+      5376,
+      196
+    ],
+    "data_offsets": [
+      21504,
+      4236288
+    ]
+  },
+  "control_blocks.0.adaln_proj.linear.bias": {
+    "dtype": "BF16",
+    "shape": [
+      96768
+    ],
+    "data_offsets": [
+      4236288,
+      4429824
+    ]
+  },
+  "control_blocks.0.adaln_proj.linear.weight": {
+    "dtype": "BF16",
+    "shape": [
+      96768,
+      2688
+    ],
+    "data_offsets": [
+      4429824,
+      524654592
+    ]
+  },
+  "control_blocks.0.after_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      524654592,
+      524665344
+    ]
+  },
+  "control_blocks.0.after_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      524665344,
+      582468096
+    ]
+  },
+  "control_blocks.0.attn.norm_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      582468096,
+      582468352
+    ]
+  },
+  "control_blocks.0.attn.norm_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      582468352,
+      582468608
+    ]
+  },
+  "control_blocks.0.attn.to_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      582468608,
+      659538944
+    ]
+  },
+  "control_blocks.0.attn.to_out.0.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      7168
+    ],
+    "data_offsets": [
+      659538944,
+      736609280
+    ]
+  },
+  "control_blocks.0.attn.to_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      736609280,
+      813679616
+    ]
+  },
+  "control_blocks.0.attn.to_v.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      813679616,
+      890749952
+    ]
+  },
+  "control_blocks.0.before_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      890749952,
+      890760704
+    ]
+  },
+  "control_blocks.0.before_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      890760704,
+      948563456
+    ]
+  },
+  "control_blocks.0.ff.net.0.proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      28672,
+      5376
+    ],
+    "data_offsets": [
+      948563456,
+      1256844800
+    ]
+  },
+  "control_blocks.0.ff.net.2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      14336
+    ],
+    "data_offsets": [
+      1256844800,
+      1410985472
+    ]
+  },
+  "control_blocks.0.norm1.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      1410985472,
+      1410996224
+    ]
+  },
+  "control_blocks.0.norm2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      1410996224,
+      1411006976
+    ]
+  },
+  "control_blocks.1.adaln_proj.linear.bias": {
+    "dtype": "BF16",
+    "shape": [
+      96768
+    ],
+    "data_offsets": [
+      1411006976,
+      1411200512
+    ]
+  },
+  "control_blocks.1.adaln_proj.linear.weight": {
+    "dtype": "BF16",
+    "shape": [
+      96768,
+      2688
+    ],
+    "data_offsets": [
+      1411200512,
+      1931425280
+    ]
+  },
+  "control_blocks.1.after_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      1931425280,
+      1931436032
+    ]
+  },
+  "control_blocks.1.after_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      1931436032,
+      1989238784
+    ]
+  },
+  "control_blocks.1.attn.norm_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      1989238784,
+      1989239040
+    ]
+  },
+  "control_blocks.1.attn.norm_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      1989239040,
+      1989239296
+    ]
+  },
+  "control_blocks.1.attn.to_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      1989239296,
+      2066309632
+    ]
+  },
+  "control_blocks.1.attn.to_out.0.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      7168
+    ],
+    "data_offsets": [
+      2066309632,
+      2143379968
+    ]
+  },
+  "control_blocks.1.attn.to_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      2143379968,
+      2220450304
+    ]
+  },
+  "control_blocks.1.attn.to_v.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      2220450304,
+      2297520640
+    ]
+  },
+  "control_blocks.1.ff.net.0.proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      28672,
+      5376
+    ],
+    "data_offsets": [
+      2297520640,
+      2605801984
+    ]
+  },
+  "control_blocks.1.ff.net.2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      14336
+    ],
+    "data_offsets": [
+      2605801984,
+      2759942656
+    ]
+  },
+  "control_blocks.1.norm1.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      2759942656,
+      2759953408
+    ]
+  },
+  "control_blocks.1.norm2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      2759953408,
+      2759964160
+    ]
+  },
+  "control_blocks.2.adaln_proj.linear.bias": {
+    "dtype": "BF16",
+    "shape": [
+      96768
+    ],
+    "data_offsets": [
+      2759964160,
+      2760157696
+    ]
+  },
+  "control_blocks.2.adaln_proj.linear.weight": {
+    "dtype": "BF16",
+    "shape": [
+      96768,
+      2688
+    ],
+    "data_offsets": [
+      2760157696,
+      3280382464
+    ]
+  },
+  "control_blocks.2.after_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      3280382464,
+      3280393216
+    ]
+  },
+  "control_blocks.2.after_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      3280393216,
+      3338195968
+    ]
+  },
+  "control_blocks.2.attn.norm_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      3338195968,
+      3338196224
+    ]
+  },
+  "control_blocks.2.attn.norm_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      3338196224,
+      3338196480
+    ]
+  },
+  "control_blocks.2.attn.to_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      3338196480,
+      3415266816
+    ]
+  },
+  "control_blocks.2.attn.to_out.0.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      7168
+    ],
+    "data_offsets": [
+      3415266816,
+      3492337152
+    ]
+  },
+  "control_blocks.2.attn.to_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      3492337152,
+      3569407488
+    ]
+  },
+  "control_blocks.2.attn.to_v.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      3569407488,
+      3646477824
+    ]
+  },
+  "control_blocks.2.ff.net.0.proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      28672,
+      5376
+    ],
+    "data_offsets": [
+      3646477824,
+      3954759168
+    ]
+  },
+  "control_blocks.2.ff.net.2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      14336
+    ],
+    "data_offsets": [
+      3954759168,
+      4108899840
+    ]
+  },
+  "control_blocks.2.norm1.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      4108899840,
+      4108910592
+    ]
+  },
+  "control_blocks.2.norm2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      4108910592,
+      4108921344
+    ]
+  },
+  "control_blocks.3.adaln_proj.linear.bias": {
+    "dtype": "BF16",
+    "shape": [
+      96768
+    ],
+    "data_offsets": [
+      4108921344,
+      4109114880
+    ]
+  },
+  "control_blocks.3.adaln_proj.linear.weight": {
+    "dtype": "BF16",
+    "shape": [
+      96768,
+      2688
+    ],
+    "data_offsets": [
+      4109114880,
+      4629339648
+    ]
+  },
+  "control_blocks.3.after_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      4629339648,
+      4629350400
+    ]
+  },
+  "control_blocks.3.after_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      4629350400,
+      4687153152
+    ]
+  },
+  "control_blocks.3.attn.norm_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      4687153152,
+      4687153408
+    ]
+  },
+  "control_blocks.3.attn.norm_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      4687153408,
+      4687153664
+    ]
+  },
+  "control_blocks.3.attn.to_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      4687153664,
+      4764224000
+    ]
+  },
+  "control_blocks.3.attn.to_out.0.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      7168
+    ],
+    "data_offsets": [
+      4764224000,
+      4841294336
+    ]
+  },
+  "control_blocks.3.attn.to_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      4841294336,
+      4918364672
+    ]
+  },
+  "control_blocks.3.attn.to_v.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      4918364672,
+      4995435008
+    ]
+  },
+  "control_blocks.3.ff.net.0.proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      28672,
+      5376
+    ],
+    "data_offsets": [
+      4995435008,
+      5303716352
+    ]
+  },
+  "control_blocks.3.ff.net.2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      14336
+    ],
+    "data_offsets": [
+      5303716352,
+      5457857024
+    ]
+  },
+  "control_blocks.3.norm1.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      5457857024,
+      5457867776
+    ]
+  },
+  "control_blocks.3.norm2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      5457867776,
+      5457878528
+    ]
+  },
+  "control_blocks.4.adaln_proj.linear.bias": {
+    "dtype": "BF16",
+    "shape": [
+      96768
+    ],
+    "data_offsets": [
+      5457878528,
+      5458072064
+    ]
+  },
+  "control_blocks.4.adaln_proj.linear.weight": {
+    "dtype": "BF16",
+    "shape": [
+      96768,
+      2688
+    ],
+    "data_offsets": [
+      5458072064,
+      5978296832
+    ]
+  },
+  "control_blocks.4.after_proj.bias": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      5978296832,
+      5978307584
+    ]
+  },
+  "control_blocks.4.after_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      5376
+    ],
+    "data_offsets": [
+      5978307584,
+      6036110336
+    ]
+  },
+  "control_blocks.4.attn.norm_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      6036110336,
+      6036110592
+    ]
+  },
+  "control_blocks.4.attn.norm_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ],
+    "data_offsets": [
+      6036110592,
+      6036110848
+    ]
+  },
+  "control_blocks.4.attn.to_k.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      6036110848,
+      6113181184
+    ]
+  },
+  "control_blocks.4.attn.to_out.0.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      7168
+    ],
+    "data_offsets": [
+      6113181184,
+      6190251520
+    ]
+  },
+  "control_blocks.4.attn.to_q.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      6190251520,
+      6267321856
+    ]
+  },
+  "control_blocks.4.attn.to_v.weight": {
+    "dtype": "BF16",
+    "shape": [
+      7168,
+      5376
+    ],
+    "data_offsets": [
+      6267321856,
+      6344392192
+    ]
+  },
+  "control_blocks.4.ff.net.0.proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      28672,
+      5376
+    ],
+    "data_offsets": [
+      6344392192,
+      6652673536
+    ]
+  },
+  "control_blocks.4.ff.net.2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376,
+      14336
+    ],
+    "data_offsets": [
+      6652673536,
+      6806814208
+    ]
+  },
+  "control_blocks.4.norm1.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      6806814208,
+      6806824960
+    ]
+  },
+  "control_blocks.4.norm2.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5376
+    ],
+    "data_offsets": [
+      6806824960,
+      6806835712
+    ]
+  }
+}

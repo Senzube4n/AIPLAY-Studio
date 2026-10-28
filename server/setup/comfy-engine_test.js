@@ -168,12 +168,17 @@ test("failed activation reuses a verified same-target stage even when disk space
   await r.run(COMFY_SETUP_ID); assert.equal((await finish(r)).state, "done"); assert.equal(installs, 1); assert.equal(attempts, 2);
 });
 
-test("simultaneous requests share one job and a live interrupted installer prevents another install", async t => {
-  const appData = await fixture(t), wait = pending(); let installs = 0;
-  const r = runner(appData, { install: async ({ root, backend, tag }) => { installs++; await wait.promise; return { ok: true, metadata: await stage(root, backend, tag) }; } });
+test("simultaneous requests share one job and a live interrupted installer prevents another install", { timeout: 10_000 }, async t => {
+  const appData = await fixture(t), wait = pending(), entered = pending(); let installs = 0;
+  const r = runner(appData, { install: async ({ root, backend, tag }) => { installs++; entered.resolve(); await wait.promise; return { ok: true, metadata: await stage(root, backend, tag) }; } });
   const [a, b] = await Promise.all([r.run(COMFY_SETUP_ID), r.run(COMFY_SETUP_ID)]);
-  assert.equal(a.startedAt, b.startedAt); assert.equal(b.already, true); assert.equal(installs, 1);
-  wait.resolve(); assert.equal((await finish(r)).state, "done");
+  try {
+    // Quick run replies intentionally precede disk/installer readiness. Wait
+    // for this fixture's actual install entry, not an elapsed-time guess.
+    await entered.promise;
+    assert.equal(a.startedAt, b.startedAt); assert.equal(b.already, true); assert.equal(installs, 1);
+  } finally { wait.resolve(); }
+  assert.equal((await finish(r)).state, "done");
   const root = path.join(appData, "engines", `comfy-${randomUUID()}`); await stage(root);
   await writeFile(path.join(appData, "setup", `${COMFY_SETUP_ID}.json`), JSON.stringify({ id: COMFY_SETUP_ID, state: "running", tag: TAG, root, backend: "nvidia", installerPid: 123, lines: [] }));
   let alive = true, activated = 0;

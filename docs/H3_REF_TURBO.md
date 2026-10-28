@@ -1,5 +1,7 @@
 # H3 reference turbo versions
 
+For whole-video structural guidance, see [H3 source clip guidance](H3_VIDEO_CONTROL.md).
+
 Eight-step reference renders prefer **REF2V Turbo V1.1** when its file is
 installed. V1.0 remains the first fallback. Four-step reference renders keep
 the separate REF2V v0.1 adapter; text/first-last-frame paths, the default step

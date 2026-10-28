@@ -1,0 +1,38 @@
+AIPLAY H3 control preprocessors
+
+This package contains a small source subset of Fannovel16/comfyui_controlnet_aux,
+revision 59b1fc411ede8623b2997855b8018f0b3b6cf49f (Apache License 2.0).
+The original source filenames, SHA-256 hashes and local adaptations are recorded
+in SOURCES.json. The full Apache License is included as LICENSE.
+
+Depth Anything V2 architecture:
+  https://github.com/DepthAnything/Depth-Anything-V2
+  Includes DINOv2 code, copyright Meta Platforms, Inc. and affiliates.
+  Original DINOv2 copyright notices have been retained in each applicable file.
+  Related original references to DINO and timm remain in the copied sources.
+
+TorchScript YOLOX and DWPose preprocessing/inference:
+  Source subset from comfyui_controlnet_aux, using the OpenMMLab-style affine
+  transforms and SimCC decoding shipped in its TorchScript implementation.
+  https://github.com/IDEA-Research/DWPose
+  https://github.com/Megvii-BaseDetection/YOLOX
+
+AIPLAY adaptations: flattened local imports, a simple sequential transform in
+place of torchvision Compose, Comfy-selected model device, corrected padding
+for fixed batches, strict offline model lookup and a new OpenCV-only renderer.
+No CMU/OpenPose body, hand, face or drawing implementation is included.
+No downloader, ONNX backend, matplotlib or scikit-image dependency is included.
+
+The original-format full-width H3 control loader implements the inverse layout
+mapping documented by the VideoX-Fun publisher at commit
+9dc6f1d49ab14b35ec956c13ac9e35d6d52c527d:
+https://github.com/aigc-apps/VideoX-Fun/blob/9dc6f1d49ab14b35ec956c13ac9e35d6d52c527d/videox_fun/models/minimax_h3_conversion.py#L439-L473
+It concatenates Q, K and V in that order and swaps the feed-forward value/gate
+row halves to match native SwiGLU. It does not approximate a timestep basis or
+rewrite a checkpoint. This loader is specific to the original 74-tensor v1 file.
+
+This notice covers source code only. Estimator weights are separately obtained
+through the Studio catalogue and retain their own terms and uncertainty notices.
+Depth Anything V2 Small is selected explicitly; the non-commercial Large model
+is not accepted by these nodes. No inference or accuracy benchmark is implied
+by bundling this source.

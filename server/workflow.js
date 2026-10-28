@@ -2085,7 +2085,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * catalogue (videoH3FunControl). Both or neither — the door
                                 * refuses a control video with no patch rather than
                                 * rendering as if none had been asked for. */
-                               controlVideo = null, controlPatch = null,
+                               controlVideo = null, controlPatch = null, controlPatchLoader = "ModelPatchLoader",
                                controlStrength = 1.0, controlStart = 0.0, controlEnd = 1.0,
                                /* The person's own LoRAs, [{name, strength}]: after
                                 * the turbo LoRA, before the control patch. */
@@ -2349,12 +2349,14 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * arrive skewed, and a skewed depth map steers the picture skewed.
    */
   const useControl = !!(controlVideo && controlPatch);
+  if (useControl && !["ModelPatchLoader", "AiplayH3FullControlPatchLoader"].includes(controlPatchLoader))
+    throw new Error("Unsupported H3 control patch loader.");
   const controlNodes = useControl ? {
     30: { class_type: "LoadVideo", inputs: { file: String(controlVideo) } },
     31: { class_type: "GetVideoComponents", inputs: { video: ["30", 0] } },
     32: { class_type: "ImageScale",
           inputs: { image: ["31", 0], upscale_method: "bilinear", width: w, height: h, crop: "center" } },
-    33: { class_type: "ModelPatchLoader", inputs: { name: String(controlPatch) } },
+    33: { class_type: controlPatchLoader, inputs: { name: String(controlPatch) } },
   } : {};
   /* Apply the person's LoRAs after turbo distillation (or the bare model on
    * the quality path). Loading the stack at every step count does not prove

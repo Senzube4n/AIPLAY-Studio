@@ -32,6 +32,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import * as provenance from "../provenance.js";
 import { MODEL_FOLDERS, MODEL_INPUT_FOLDERS, extraBases, findShelfModel, modelName, modelLeaf, scanBases, uniqueDirs } from "../localmodels.js";
+import { isH3ControlModelInput, h3ControlModelInput } from "../h3-control-models.js";
 
 /** Media this app can plausibly have written. Anything else in the output
  *  folder (a .json sidecar, a .txt) is not a missing render. */
@@ -43,6 +44,7 @@ export function createStore({
   modelsDir,
   modelsAlso,
   bases = null,
+  comfyDir = config.comfyDir,
   inputDir = config.inputDir,
   outputDir = config.outputDir,
   prov = provenance,
@@ -176,10 +178,26 @@ export function createStore({
   }
 
   /** Resolve the same shelf-relative selection the native loader receives. */
-  async function findModel(name, input) {
+  async function findModel(name, input, nodeClass = null) {
+    if (isH3ControlModelInput(nodeClass, input)) {
+      const chosen = h3ControlModelInput(nodeClass, input, name);
+      if (!chosen) return null;
+      const matches = [];
+      for (const base of await modelBases()) {
+        const full = path.join(base, "controlnet", "aiplay_preprocessors", chosen.relative);
+        const info = await stat(full).catch(() => null);
+        if (info?.isFile() && info.size === chosen.bytes) matches.push(full);
+      }
+      if (matches.length) return matches.length === 1 ? matches[0] : null;
+      if (!comfyDir) return null;
+      const legacy = path.join(comfyDir, "custom_nodes", "comfyui_controlnet_aux", "ckpts", chosen.relative);
+      const info = await stat(legacy).catch(() => null);
+      return info?.isFile() && info.size === chosen.bytes ? legacy : null;
+    }
     const rel = modelName(name);
     if (!rel) return null;
-    const folders = MODEL_INPUT_FOLDERS[String(input || "").replace(/\d+$/, "")];
+    const folders = ["ModelPatchLoader", "AiplayH3FullControlPatchLoader"].includes(nodeClass) && input === "name" ? ["model_patches"]
+      : MODEL_INPUT_FOLDERS[String(input || "").replace(/\d+$/, "")];
     const modelDirs = await modelBases();
     if (folders) {
       // Exact native selections must see completed downloads immediately,
@@ -211,7 +229,7 @@ export function createStore({
    */
   async function resolveRecordFiles(record, { hashModels = false } = {}) {
     for (const f of [...(record.engineFiles || []), ...(record.loras || [])]) {
-      const full = await findModel(f.file, f.input);
+      const full = await findModel(f.file, f.input, f.class);
       if (!full) { f.resolvedPath = null; continue; }
       f.resolvedPath = full;
       Object.assign(f, await fileFacts(full, { hash: hashModels }));

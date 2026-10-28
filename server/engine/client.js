@@ -742,6 +742,19 @@ export function createEngineClient(deps = {}) {
      * the kind of small lie this panel must not tell. */
     inFlight.set(runId, { runId, label: spec.label ?? null, via, t0, startedAt: null });
 
+    // Internal queued callers can be stopped while graph/ledger preparation
+    // awaits disk. No await separates this check from the POST below.
+    if (typeof spec.cancelled === "function") {
+      let cancelled;
+      try { cancelled = spec.cancelled(graph); }
+      catch {
+        return finishNow({ runId, record, actor, t0, delegate, status: "rejected",
+          error: "Could not confirm the queued job's cancellation state.", throws: false });
+      }
+      if (cancelled) return finishNow({ runId, record, actor, t0, delegate, status: "rejected",
+        error: "Stopped before engine submission.", throws: false });
+    }
+
     let res;
     try {
       externalMusicWork.assertFree();

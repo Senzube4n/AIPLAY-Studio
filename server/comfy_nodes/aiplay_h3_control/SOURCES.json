@@ -1,0 +1,198 @@
+{
+  "repository": "https://github.com/Fannovel16/comfyui_controlnet_aux",
+  "revision": "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
+  "license": "Apache-2.0",
+  "upstreamLicenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+  "files": [
+    {
+      "file": "depth_dpt.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dpt.py",
+      "upstreamSha256": "242c14384069b49370dc982c81b6c410dae95c514cd2ccedba97f1042c227247",
+      "sha256": "eefb178b7622fbf970f260cf0e1d5cc86a4691715141ec9117d8a7e8f1ef5d89",
+      "bytes": 7656,
+      "changes": [
+        "Canonical LF line endings for shipped source",
+        "Flattened package-relative imports",
+        "Local sequential Compose in place of torchvision import",
+        "Use the model device selected by ComfyUI, not automatic CUDA/MPS"
+      ],
+      "observedWorkingCopySha256": "3f8c21987411d0d30f89fd25a794605b513b4d0d95026e892cdb13de0af9a3d6",
+      "observedWorkingCopyBytes": 7875,
+      "upstreamObservedWorkingCopySha256": "bc4903754da5e12df8338234fd88d5e168a1812eeb50c582eaf7e90384052c58"
+    },
+    {
+      "file": "depth_dinov2.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2.py",
+      "upstreamSha256": "2e709ffc9b9736f74c0897b2e0f5146c21b9f364c6bef03173d22b93372e79f0",
+      "sha256": "d005a925801bc547c04eeb732ac55340195a2d4e3bf4cb6a935646a6f97e723e",
+      "bytes": 15285,
+      "changes": [
+        "Canonical LF line endings for shipped source",
+        "Flattened package-relative imports"
+      ],
+      "observedWorkingCopySha256": "ce55b26819b38e55e87b22924663b8933978b7396f55a179f50d0830005d4ef3",
+      "observedWorkingCopyBytes": 15700,
+      "upstreamObservedWorkingCopySha256": "b3ae2d4dbfda1c3ced372c6c723fb316ccd98912bcfc00a83eb1cc86e021ddd9"
+    },
+    {
+      "file": "depth_attention.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/attention.py",
+      "upstreamSha256": "a8d389a81f4dc5271d2a1b95586846bdf1dc2891c10f634f9a80fbd00a4d93d1",
+      "sha256": "a8d389a81f4dc5271d2a1b95586846bdf1dc2891c10f634f9a80fbd00a4d93d1",
+      "bytes": 3506,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "6d65676dea8062b4b1d87a1de39c3303f437887b249cf8ba355bf823993f6142",
+      "observedWorkingCopyBytes": 3617,
+      "upstreamObservedWorkingCopySha256": "6d65676dea8062b4b1d87a1de39c3303f437887b249cf8ba355bf823993f6142"
+    },
+    {
+      "file": "depth_block.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/block.py",
+      "upstreamSha256": "093266ea08084c7cce7b8ddd779ecfaaa13055735faa8a7d68b5924f385b395b",
+      "sha256": "c0fea94813af5681b6c2202950096692ddaa5c8a909bf7c22b09679920b2b3a2",
+      "bytes": 9356,
+      "changes": [
+        "Canonical LF line endings for shipped source",
+        "Flattened package-relative imports"
+      ],
+      "observedWorkingCopySha256": "e71828db0c3d643e790b187eb3f54d411c026af31f7ca1d6c144fb7862ea1cec",
+      "observedWorkingCopyBytes": 9608,
+      "upstreamObservedWorkingCopySha256": "a7218ff8350794efce37a010ac7d58d212e10a5b84b43a214a7b682cac656a62"
+    },
+    {
+      "file": "depth_drop_path.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/drop_path.py",
+      "upstreamSha256": "949100aac4d9c19c9d65319dbd362886c5d46a72d7586ba4fd500e9f1d51570c",
+      "sha256": "949100aac4d9c19c9d65319dbd362886c5d46a72d7586ba4fd500e9f1d51570c",
+      "bytes": 1160,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "27abed4dd9dafa14157c9c7717bdca15fedb62702066f627b314bc91c06a1d53",
+      "observedWorkingCopyBytes": 1195,
+      "upstreamObservedWorkingCopySha256": "27abed4dd9dafa14157c9c7717bdca15fedb62702066f627b314bc91c06a1d53"
+    },
+    {
+      "file": "depth_layer_scale.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/layer_scale.py",
+      "upstreamSha256": "356817b5d1390737128cbcc03a5333fd3060b73beae478772282ccb851d0ef85",
+      "sha256": "356817b5d1390737128cbcc03a5333fd3060b73beae478772282ccb851d0ef85",
+      "bytes": 823,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "a79f5b673c3f1fa60173b1905501ecfeb7fe77bed9b5e35881390c12baecbdfa",
+      "observedWorkingCopyBytes": 851,
+      "upstreamObservedWorkingCopySha256": "a79f5b673c3f1fa60173b1905501ecfeb7fe77bed9b5e35881390c12baecbdfa"
+    },
+    {
+      "file": "depth_mlp.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/mlp.py",
+      "upstreamSha256": "c18c5b3f021408597a473bb710070ec3fb3b39f5a2e42e88ae83ced425a608b5",
+      "sha256": "c18c5b3f021408597a473bb710070ec3fb3b39f5a2e42e88ae83ced425a608b5",
+      "bytes": 1272,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "9856d7274ca32428ff05dacf7adf8ad10fa81d7bb4e5d299ab57cf421dcc7620",
+      "observedWorkingCopyBytes": 1313,
+      "upstreamObservedWorkingCopySha256": "9856d7274ca32428ff05dacf7adf8ad10fa81d7bb4e5d299ab57cf421dcc7620"
+    },
+    {
+      "file": "depth_patch_embed.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/patch_embed.py",
+      "upstreamSha256": "b3f82e19926c9cfb63f10136aca5e8a723bde1ad62dae1d04f90d405f9439baf",
+      "sha256": "b3f82e19926c9cfb63f10136aca5e8a723bde1ad62dae1d04f90d405f9439baf",
+      "bytes": 2832,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "2d949ea0eff33185d829995373c963cac6eaebf77b4808478a72934d89587e42",
+      "observedWorkingCopyBytes": 2921,
+      "upstreamObservedWorkingCopySha256": "2d949ea0eff33185d829995373c963cac6eaebf77b4808478a72934d89587e42"
+    },
+    {
+      "file": "depth_swiglu_ffn.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/dinov2_layers/swiglu_ffn.py",
+      "upstreamSha256": "df81d9901240214edc1831ce1b77558dcd6227b29a2f000fc5f546df55d2d09a",
+      "sha256": "df81d9901240214edc1831ce1b77558dcd6227b29a2f000fc5f546df55d2d09a",
+      "bytes": 1859,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "e1744aa9d29610c57d4fa153ec0aa545ef60da565d2aaac754d318fea0e30d7c",
+      "observedWorkingCopyBytes": 1922,
+      "upstreamObservedWorkingCopySha256": "e1744aa9d29610c57d4fa153ec0aa545ef60da565d2aaac754d318fea0e30d7c"
+    },
+    {
+      "file": "depth_blocks.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/util/blocks.py",
+      "upstreamSha256": "351aa24b8af4bef923ebe3bed5e5e8503b08e39bf06ee045d6444a485a2036a8",
+      "sha256": "351aa24b8af4bef923ebe3bed5e5e8503b08e39bf06ee045d6444a485a2036a8",
+      "bytes": 3987,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "3245bd6706b5946d7e0735f059ced4d9ad0c190cd33820908f78c6d8ff78eb85",
+      "observedWorkingCopyBytes": 4135,
+      "upstreamObservedWorkingCopySha256": "3245bd6706b5946d7e0735f059ced4d9ad0c190cd33820908f78c6d8ff78eb85"
+    },
+    {
+      "file": "depth_transform.py",
+      "upstreamPath": "src/custom_controlnet_aux/depth_anything_v2/util/transform.py",
+      "upstreamSha256": "a97df1dbb687457a40c387fdc3482edee7ddc5c142c7d2735ca6235a8ae2885f",
+      "sha256": "a97df1dbb687457a40c387fdc3482edee7ddc5c142c7d2735ca6235a8ae2885f",
+      "bytes": 6075,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "ad93afd07aee97a1c73aaa9217c1a8e80c097a861800c56e5425446ff3ecabaa",
+      "observedWorkingCopyBytes": 6232,
+      "upstreamObservedWorkingCopySha256": "ad93afd07aee97a1c73aaa9217c1a8e80c097a861800c56e5425446ff3ecabaa"
+    },
+    {
+      "file": "pose_jit_det.py",
+      "upstreamPath": "src/custom_controlnet_aux/dwpose/dw_torchscript/jit_det.py",
+      "upstreamSha256": "83f96c563acf40997408020f14ce49f8b4d3d30ed86a23a611bd62674f864cb3",
+      "sha256": "83f96c563acf40997408020f14ce49f8b4d3d30ed86a23a611bd62674f864cb3",
+      "bytes": 4424,
+      "changes": [
+        "Canonical LF line endings for shipped source"
+      ],
+      "observedWorkingCopySha256": "62cf2c72ccdadbcbfb48ade48de2cf78891a6fd7d906c3802177f76198c66bd4",
+      "observedWorkingCopyBytes": 4548,
+      "upstreamObservedWorkingCopySha256": "62cf2c72ccdadbcbfb48ade48de2cf78891a6fd7d906c3802177f76198c66bd4"
+    },
+    {
+      "file": "pose_jit_pose.py",
+      "upstreamPath": "src/custom_controlnet_aux/dwpose/dw_torchscript/jit_pose.py",
+      "upstreamSha256": "3598bd18720571871d9ebd205737e9fa3eca8e41231263ef94773418d99e8373",
+      "sha256": "eb520ab5f915ac88798271cc9d0b0e4bd6bae83c42e423733280f81d324ad80d",
+      "bytes": 12126,
+      "changes": [
+        "Canonical LF line endings for shipped source",
+        "Do not add a redundant full padding batch when count is divisible by five"
+      ],
+      "observedWorkingCopySha256": "1c57bce68de3cb4b6fdd2aabfcea9d95bdf2d21668a9da595ab90dc08ad4dacc",
+      "observedWorkingCopyBytes": 12488,
+      "upstreamObservedWorkingCopySha256": "7622487bf9c47ab48d108d3252c448d8df3686af8099296edb10b921201facd8"
+    }
+  ],
+  "exclusions": [
+    "No OpenPose/CMU body, hand, face or drawing implementation",
+    "No ONNX inference or onnxruntime",
+    "No downloader, matplotlib, scikit-image, mediapipe or optional wrapper imports"
+  ],
+  "weightTerms": "Model weights are separate. This source licence does not establish rights for redistributed estimator weights; keep catalogue notices.",
+  "upstreamLicenseObservedWorkingCopySha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+  "hashScope": {
+    "sha256": "Modified shipped Python file bytes, UTF-8 with LF line endings; bytes is that shipped byte count.",
+    "upstreamSha256": "Exact upstream Git blob bytes at revision and upstreamPath.",
+    "upstreamLicenseSha256": "Exact upstream LICENSE.txt Git blob bytes at revision.",
+    "observedWorkingCopySha256": "Historical modified working-copy bytes before LF normalization (CRLF); not the shipped Git blob.",
+    "upstreamObservedWorkingCopySha256": "Historical source working-copy bytes observed locally at the clean pinned revision (CRLF); not the canonical upstream Git blob.",
+    "upstreamLicenseObservedWorkingCopySha256": "Historical local clean upstream LICENSE.txt working-copy bytes before Git line-ending normalization."
+  }
+}

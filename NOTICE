@@ -80,6 +80,17 @@ in the app.
                             Kingdom, Republic of Korea, United States of
                             America.
 
+    full-width H3 video-to-video control (6.81 GB)
+                            MiniMax H3 Community Licence (a patch on H3's weights)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property); this patch is a derivative of H3)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
     Fast setting for H3 (TaoMate 3-step, 182 MB)
                             MiniMax H3 Community Licence (derived from H3)
                             Output rights: yours, with conditions (MiniMax H3
@@ -716,6 +727,33 @@ RUNTIME DEPENDENCIES (separate installations)
 ────────────────────────────────────────────────────────────────────────────────
 BUNDLED THIRD-PARTY CODE
 ────────────────────────────────────────────────────────────────────────────────
+    H3 control preprocessors
+                           Apache-2.0 source subset of Fannovel16's
+                           comfyui_controlnet_aux at revision
+                           59b1fc411ede8623b2997855b8018f0b3b6cf49f.
+                           Source: https://github.com/Fannovel16/comfyui_controlnet_aux
+                           Bundled in server/comfy_nodes/aiplay_h3_control/,
+                           with LICENSE, NOTICE and SOURCES.json recording
+                           original hashes and local adaptations.
+                           Depth Anything V2 includes DINOv2 code, copyright
+                           Meta Platforms, Inc. and affiliates; original
+                           notices and DINO/timm references are retained.
+                           Depth source: https://github.com/DepthAnything/Depth-Anything-V2
+                           TorchScript pose/detection uses the upstream affine
+                           transforms and SimCC decoding, with an OpenCV-only
+                           renderer. Related authors:
+                           https://github.com/IDEA-Research/DWPose
+                           https://github.com/Megvii-BaseDetection/YOLOX
+                           Adaptations use local imports, sequential transforms,
+                           Comfy-selected device and strict offline model lookup.
+                           No CMU/OpenPose implementation, downloader or ONNX
+                           backend is included. This attribution covers software
+                           only; estimator weights retain the separate terms
+                           and uncertainty notices in the model list above.
+                           The full-width control loader follows VideoX-Fun's
+                           documented tensor-layout conversion; its pinned
+                           source and exact adaptation are in the bundled NOTICE.
+
     MiniMax H3 Block Cache (T8)
                            Apache-2.0, Copyright T8mars.
                            Source: https://github.com/T8mars/comfyui-minimax-h3-blockcache-T8

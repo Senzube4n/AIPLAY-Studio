@@ -32,6 +32,9 @@
  * Runs standalone (`node server/control/pose_test.js`) and in the hook.
  */
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import {
   poseGraph, poseResolution, poseHash, DWPOSE_MODELS, DWPOSE_NODE_DEFAULTS,
   POSE_GATE,
@@ -256,12 +259,69 @@ ok("an explicit prefix wins",
   ok("...so the catalogue cannot drift onto the .onnx builds the node would default to",
     !names.some((n) => n.endsWith(".onnx")), names.join(", "));
 
-  /* The destination is inside the node pack's own ckpts/ tree, which is the
-   * only place comfyui_controlnet_aux looks. A row that pointed at models/
-   * would report ready while the pack downloaded its own copy anyway. */
-  ok("...written where the node pack actually reads from",
-    (cap?.files || []).every((f) => /comfyui_controlnet_aux[\\/]ckpts[\\/]/.test(f.dest)),
+  // Existing external aux installs must keep the loader's real ckpts tree;
+  // fresh bundled-H3 installs must not create an incomplete aux code package.
+  ok("...the shared row uses the legacy aux or bundled H3 shelf",
+    (cap?.files || []).every((f) => /comfyui_controlnet_aux[\\/]ckpts[\\/]|controlnet[\\/]aiplay_preprocessors[\\/]/.test(f.dest)),
     (cap?.files || []).map((f) => f.dest).join(" | "));
+  const fixturePrefix = "aiplay-pose-catalogue-";
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), fixturePrefix));
+  try {
+    const rig = path.join(fixtureRoot, "rig"), models = path.join(fixtureRoot, "models");
+    const pack = path.join(rig, "ComfyUI", "custom_nodes", "comfyui_controlnet_aux");
+    const rels = {
+      posePreprocess: ["hr16/yolox-onnx/yolox_l.torchscript.pt", "hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt"],
+      depthPreprocess: ["depth-anything/Depth-Anything-V2-Small/depth_anything_v2_vits.pth"],
+      depthPreprocessLarge: ["depth-anything/Depth-Anything-V2-Large/depth_anything_v2_vitl.pth"],
+    };
+    const legacy = (rel) => path.join(pack, "ckpts", rel);
+    const modern = (rel) => path.join(models, "controlnet", "aiplay_preprocessors", rel);
+    const readCatalogue = () => {
+      const moduleUrl = new URL("../models.js", import.meta.url).href;
+      const code = 'import { CATALOG } from ' + JSON.stringify(moduleUrl) + ';'
+        + 'console.log(JSON.stringify(Object.fromEntries(CATALOG.filter(c => ["posePreprocess","depthPreprocess","depthPreprocessLarge"].includes(c.id)).map(c => [c.id,c.files.map(f => f.dest)]))));';
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+        encoding: "utf8", timeout: 15_000,
+        env: { ...process.env, AIPLAY_APPDATA: path.join(fixtureRoot, "profile"), AIPLAY_RIG: rig,
+          AIPLAY_MODELS_DIR: models, AIPLAY_UI_PORT: "0" },
+      });
+      if (child.status !== 0 || child.error) throw new Error("Catalogue fixture did not load: " + (child.error?.message || child.stderr));
+      return JSON.parse(child.stdout);
+    };
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const fresh = readCatalogue();
+    ok("a fresh install puts only the three bundled H3 files in the model shelf",
+      same(fresh.posePreprocess, rels.posePreprocess.map(modern))
+      && same(fresh.depthPreprocess, rels.depthPreprocess.map(modern))
+      && same(fresh.depthPreprocessLarge, rels.depthPreprocessLarge.map(legacy)));
+    ok("a fresh catalogue read creates no incomplete aux package", !fs.existsSync(pack));
+    const first = rels.posePreprocess[0];
+    fs.mkdirSync(path.dirname(legacy(first)), { recursive: true });
+    fs.writeFileSync(legacy(first), "existing legacy fixture");
+    const existing = readCatalogue();
+    ok("an exact legacy file is reused even without aux code, while other H3 files stay modern",
+      existing.posePreprocess[0] === legacy(first) && existing.posePreprocess[1] === modern(rels.posePreprocess[1])
+      && existing.depthPreprocess[0] === modern(rels.depthPreprocess[0]));
+    for (const rel of [...rels.posePreprocess, ...rels.depthPreprocess]) {
+      fs.mkdirSync(path.dirname(modern(rel)), { recursive: true });
+      fs.writeFileSync(modern(rel), "existing H3 fixture");
+    }
+    fs.writeFileSync(path.join(pack, "__init__.py"), "# fixture only");
+    const installed = readCatalogue();
+    ok("installed external aux selects its actual legacy loader paths for every row",
+      Object.entries(rels).every(([id, files]) => same(installed[id], files.map(legacy))));
+    ok("adding aux after H3 leaves modern files intact and requires explicit setup of missing legacy copies",
+      [...rels.posePreprocess, ...rels.depthPreprocess].every((rel) => fs.readFileSync(modern(rel), "utf8") === "existing H3 fixture")
+      && !fs.existsSync(legacy(rels.posePreprocess[1])) && !fs.existsSync(legacy(rels.depthPreprocess[0])));
+    ok("the catalogue explains explicit legacy setup instead of promising silent migration",
+      /Legacy VACE Pose/.test(cap.note) && /copy/.test(cap.note) && /Download again/.test(cap.note)
+      && /does not move weights automatically/.test(cap.note));
+  } finally {
+    const target = path.resolve(fixtureRoot), temporary = path.resolve(os.tmpdir());
+    if (path.dirname(target) !== temporary || !path.basename(target).startsWith(fixturePrefix))
+      throw new Error("Refusing to clean an unrelated catalogue fixture path");
+    fs.rmSync(target, { recursive: true, force: true });
+  }
 
   const r = cap?.outputRights || {};
   ok("the entry REFUSES to claim rights, because half its chain is unread",

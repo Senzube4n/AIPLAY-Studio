@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="ui.css">
 <link rel="stylesheet" href="local-model-access.css">
+<link rel="stylesheet" href="h3-video-control.css">
 <link rel="stylesheet" href="image-editor.css">
 <link rel="stylesheet" href="router.css">
 <link rel="stylesheet" href="avatar-shell.css">
@@ -1285,6 +1286,35 @@
          input, each dropdown sharing its row with its "Use a file…" button;
          what each one does is its "!" (web/tips.js), not a paragraph. -->
     <div class="vsec">Frames</div>
+
+    <div class="field" id="vidControlField" hidden>
+      <label class="flabel">Source clip <span class="sp meta">H3 only</span></label>
+      <div class="h3v-drop picdrop" id="vidControlDrop" role="group" aria-label="Source clip">
+        <div class="h3v-card" id="vidControlCard" hidden>
+          <video id="vidControlPreview" controls muted playsinline preload="metadata" aria-label="Source clip preview"></video>
+          <div class="cta"><span class="h3v-name" id="vidControlName"></span><button type="button" class="edtool" id="vidControlRemove">Remove</button></div>
+        </div>
+        <div class="cta">
+          <button type="button" class="edtool" id="vidControlLibrary">Library</button>
+          <button type="button" class="edtool" id="vidControlUpload">Upload…</button>
+          <span class="chip" id="vidControlStatus" role="status">Optional</span>
+        </div>
+        <input type="hidden" id="vidControlSource">
+        <input type="file" id="vidControlFile" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.m4v" hidden>
+        <div class="h3v-menu" id="vidControlMenu" hidden></div>
+      </div>
+      <p class="hint warnhint" id="vidControlNote" hidden></p>
+      <button type="button" class="edtool" id="vidControlGet" hidden>Review model</button>
+      <details class="more" id="vidControlOptions" hidden>
+        <summary>Control settings</summary>
+        <div class="params">
+          <label for="vidControlMode">control</label><span class="pv"><select class="sel2" id="vidControlMode"><option value="depth">Depth</option><option value="pose">Pose</option></select></span>
+          <label for="vidControlStrength">strength</label><span class="pv"><input class="in2 num" id="vidControlStrength" type="number" min="0" max="2" step="0.05" value="1"></span>
+          <label for="vidControlStart">start</label><span class="pv"><input class="in2 num" id="vidControlStart" type="number" min="0" max="1" step="0.05" value="0" title="Fraction of the denoising schedule"></span>
+          <label for="vidControlEnd">end</label><span class="pv"><input class="in2 num" id="vidControlEnd" type="number" min="0" max="1" step="0.05" value="1" title="Fraction of the denoising schedule"></span>
+        </div>
+      </details>
+    </div>
 
     <!-- A clip that opens on the song's own cover reads as the same artwork
          moving, rather than a second unrelated picture. Any picture works too:

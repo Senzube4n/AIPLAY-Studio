@@ -342,7 +342,7 @@ test("4: a saved character's pictures are staged like the request's own: an uplo
    * "keeps Mira", and the reply blamed the library. */
   const index = read("./index.js");
   const from = index.indexOf("        const stageFrame = async (cover) => {");
-  const to = index.indexOf("        /* ── VIDEO-TO-VIDEO, AND THE MODEL IT NEEDS");
+  const to = index.indexOf("        // Validate options before staging any references;", from);
   const refLine = /\n\s+const stageRef = async \(v\) => \{ try \{ return staged\(v\) \|\| await stageFrame\(v\); \} catch \{ return undefined; \} \};/.exec(index)?.[0];
   assert.ok(from > 0 && to > from && refLine, "stageFrame, staged and stageRef are where the door defines them");
   const create = createDoor();
@@ -424,7 +424,12 @@ test("5: Keep my character sits under the description, shows in Simple, and hold
     'song: $("vidSndRow") && !$("vidSndRow").hidden ? true : undefined']) {
     assert.ok(vidfit.includes(f), f);
   }
-  assert.match(vidfit, /"vidCharacter", "vidSndSong", "vidSndStart", "vidVideoVae"\]\);/, "a change to any of them asks again");
+  const watchSource = /const WATCH = new Set\((\[[\s\S]*?\])\);/.exec(vidfit)?.[1];
+  assert.ok(watchSource, "the actual change-watcher set exists");
+  const watched = JSON.parse(watchSource);
+  for (const id of ["vidCharacter", "vidSndSong", "vidSndStart", "vidVideoVae"])
+    assert.ok(watched.includes(id), `a change to ${id} asks again`);
+  assert.match(vidfit, /if \(!WATCH\.has\(id\)\) return;/, "the actual change handler consults that set");
   assert.ok(vidfit.includes("videoVae: videoVaeChosen(),"), "the check names Engine settings' decoder, so the Runs line is true");
   assert.ok(vidfit.includes("paintSong(r);"), "and paints Song under the clip's words");
   /* web/receipt.js: the steps field reads Keep my character's words first. */

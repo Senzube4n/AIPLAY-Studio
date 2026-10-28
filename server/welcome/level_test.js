@@ -404,11 +404,21 @@ function spans(pick) {
 const kept = keeps.flatMap((k) => spans((attrs) => (k.by === "id"
   ? new RegExp(`\\bid="${k.name}"`).test(attrs)
   : new RegExp(`\\bclass="[^"]*\\b${k.name}\\b[^"]*"`).test(attrs))));
+/* A kept input can contain an explicitly Advanced-only subsection. Read the
+ * actual linked stylesheet and its scoped hide rule, rather than exempting
+ * individual tooltip ids: removing that rule must make this check fail. */
+const controlStyles = HTML.includes('href="h3-video-control.css"') ? read("web/h3-video-control.css") : "";
+const nestedHidden = [...controlStyles.matchAll(/#([\w-]+)\.assist-on #([\w-]+)\s*\{\s*display: none !important;\s*\}/g)]
+  .flatMap(([, panel, id]) => spans((attrs) => attrs.includes(`id="${panel}"`))
+    .some((body) => body.includes(`id="${id}"`)) ? spans((attrs) => attrs.includes(`id="${id}"`)) : []);
 ok(`the Simple rule's keep-list was read (${keeps.length} kept, ${kept.length} elements)`, keeps.length >= 8 && kept.length >= 4,
   keeps.map((k) => k.name).join(","));
 const shown = ["images", "video"].flatMap((v) => ADVANCED_ADDS[v].flatMap((r) => r.ids))
-  .filter((id) => kept.some((s) => s.includes(`id="${id}"`)));
+  .filter((id) => kept.some((s) => s.includes(`id="${id}"`)) && !nestedHidden.some((s) => s.includes(`id="${id}"`)));
 ok("no Pictures or Video tooltip promises a control Simple already shows", shown.length === 0, shown.join(", "));
+ok("source clip guidance is named only where the actual Simple CSS hides its settings",
+  ["vidControlMode", "vidControlStrength", "vidControlStart", "vidControlEnd"].every((id) =>
+    ADVANCED_ADDS.video.some((row) => row.ids.includes(id)) && nestedHidden.some((s) => s.includes(`id="${id}"`))));
 /* RunPod is Advanced only (the owner, 2026-09-26): 40f5859 kept its box, with
  * Remote CFG, negative, size and guidance, on Simple's screens. */
 const runpodKept = [...keeps.filter((k) => /runpod/i.test(k.name)).map((k) => k.name),

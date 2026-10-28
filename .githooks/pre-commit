@@ -1550,6 +1550,14 @@ if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/safety_gate_test.py || exit 1
 node scripts/timeline_grade_test.mjs || exit 1
 # Video-to-video: the control video through all four layers that drop what they
 # do not name, and the refusal that offers the model instead of shrugging.
+node --check server/h3-video-control.js || exit 1
+node --check server/h3-control-models.js || exit 1
+node --check server/h3-control-compat.js || exit 1
+node --check web/h3-video-control.js || exit 1
+node --test server/h3-video-control_test.js server/h3-video-control-routes_test.js server/h3-video-control-art_test.js server/h3-video-control-ui_test.js server/h3-video-control-mcp_test.js server/h3-video-control-engine_test.js server/h3-control-deploy_test.js server/h3-video-control-plan_test.js || exit 1
+node --test server/h3-control-compat_test.js || exit 1
+# Bundled depth/pose nodes: CPU fixtures with fake estimators, no weights or GPU.
+python server/h3_control_nodes_test.py || exit 1
 node server/video_v2v_test.js || exit 1
 # The four layer styles added 2026-09-21, and the contract all ten share: paint
 # inside the matte, leave alpha alone. Straight alpha hides a breach of that on

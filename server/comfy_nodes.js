@@ -2,7 +2,9 @@
  * The Studio's own ComfyUI nodes, deployed into the engine at boot, 2026-09-17.
  *
  * server/comfy_nodes/*.py are single-file custom nodes (ComfyUI loads any .py
- * in custom_nodes/ that exports NODE_CLASS_MAPPINGS). They are copied into the
+ * in custom_nodes/ that exports NODE_CLASS_MAPPINGS). The bundled H3 control
+ * package is deployed at every start too; only model inference needs weights.
+ * They are copied into the
  * rig's custom_nodes folder before the engine starts, and only when the bytes
  * differ — so an edit here reaches the engine on the next boot and an unchanged
  * file is never rewritten. Nothing else in custom_nodes is touched.
@@ -46,12 +48,15 @@ export const STUDIO_NODES_DIR = path.join(path.dirname(fileURLToPath(import.meta
  * clip runs without the cache and says so (art.js blockCacheNote); switched
  * off, the running engine keeps the node loaded, unused, until it restarts.
  */
+export const ALWAYS_NODES = Object.freeze(["aiplay_h3_control"]);
 export const VENDORED_NODES = Object.freeze(["comfyui-minimax-h3-blockcache-T8"]);
+export const STUDIO_NODE_PACKS = Object.freeze([...VENDORED_NODES, ...ALWAYS_NODES]);
 /** The file that marks a vendored folder as Studio's copy. */
 export const MARKER = ".aiplay-studio-copy.json";
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
-const SHIPPED = /\.py$|^LICENSE$/;
+export const SHIPPED_NODE_FILE = /\.py$|^(?:LICENSE|NOTICE|SOURCES\.json)$/;
+const SHIPPED = SHIPPED_NODE_FILE;
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 /** The folder's marker, or null (none, or one that does not parse as ours). */
@@ -93,9 +98,11 @@ function removeBytecode(to, pyNames) {
   if (!readdirSync(cache).length) rmdirSync(cache);
 }
 
-const markerNote = () => ({
-  note: "Copied by AIPLAY Studio because its block cache switch (video_settings block_cache) is on. "
-    + "Studio removes its copy when the engine starts with the switch off. Delete this file to make the folder yours.",
+const markerNote = (dir) => ({
+  note: (ALWAYS_NODES.includes(dir)
+    ? "Copied by AIPLAY Studio for optional H3 control preprocessing. Model weights are installed separately. Unchanged Studio files update at engine start. "
+    : "Copied by AIPLAY Studio because its block cache switch (video_settings block_cache) is on. Studio removes its copy when the engine starts with the switch off. ")
+    + "Delete this file to make the folder yours.",
 });
 
 /**
@@ -142,11 +149,26 @@ function syncVendored(dir, want, sourceDir, customNodesDir, out) {
     if (!existsSync(markerPath) && !left.length) return;                       // an unmarked folder with nothing of Studio's left
     /* Something stays (a file changed or added there): the folder stays
      * marked, with the files still Studio's, so switching on fills it again. */
-    writeFileSync(markerPath, JSON.stringify({ ...markerNote(), createdFolder: marker.createdFolder,
+    writeFileSync(markerPath, JSON.stringify({ ...markerNote(dir), createdFolder: marker.createdFolder,
       files: Object.fromEntries(left.map((n) => [n, marker.files[n]])) }, null, 2));
     return;
   }
   if (!existsSync(from)) return;
+  // A managed marker is not permission to overwrite local patches. Update an
+  // unchanged Studio copy, but preserve the whole folder after an owned file
+  // was edited or an unrecognised file was added.
+  if (here && marker && ALWAYS_NODES.includes(dir)) {
+    const changed = Object.entries(marker.files).some(([name, hash]) => {
+      const file = path.join(to, name);
+      return existsSync(file) && (isDir(file) || sha256(readFileSync(file)) !== hash);
+    });
+    const added = readdirSync(to).filter(judged).some(name => !Object.hasOwn(marker.files, name));
+    if (changed || added) {
+      out.foreign.push(dir);
+      out.warnings.push(`Preserved locally changed custom_nodes/${dir}. Restore its Studio copy before updating these nodes.`);
+      return;
+    }
+  }
   mkdirSync(to, { recursive: true });
   const files = {};
   for (const name of readdirSync(from).sort()) {
@@ -166,7 +188,7 @@ function syncVendored(dir, want, sourceDir, customNodesDir, out) {
     unlinkSync(p);
     out.removed.push(`${dir}/${n}`);
   }
-  writeFileSync(path.join(to, MARKER), JSON.stringify({ ...markerNote(), createdFolder: marker ? marker.createdFolder : true, files }, null, 2));
+  writeFileSync(path.join(to, MARKER), JSON.stringify({ ...markerNote(dir), createdFolder: marker ? marker.createdFolder : true, files }, null, 2));
 }
 
 /* Every deploy, counted. server/comfy.js deploys at each engine start, and a
@@ -178,8 +200,8 @@ let deploys = 0;
 export const deployEpoch = () => deploys;
 
 /**
- * Copy every studio node whose bytes differ, and each vendored folder only
- * while `want[dir]` is true (removing Studio's copy when it is not).
+ * Copy every Studio node whose bytes differ, the always-bundled H3 control
+ * package, and optional vendored folders while `want[dir]` is true.
  * Returns { copied, kept, removed, foreign, warnings, dir }.
  */
 export function deployStudioNodes(customNodesDir, sourceDir = STUDIO_NODES_DIR, { want = {} } = {}) {
@@ -199,6 +221,6 @@ export function deployStudioNodes(customNodesDir, sourceDir = STUDIO_NODES_DIR, 
    * copy ComfyUI Manager installed is found under the same name and is used
    * as it is, instead of Studio registering the node a second time. */
   const out = { copied, kept, removed, foreign, warnings };
-  for (const dir of VENDORED_NODES) syncVendored(dir, want[dir] === true, sourceDir, customNodesDir, out);
+  for (const dir of STUDIO_NODE_PACKS) syncVendored(dir, ALWAYS_NODES.includes(dir) || want[dir] === true, sourceDir, customNodesDir, out);
   return { copied, kept, removed, foreign, warnings, dir: customNodesDir };
 }

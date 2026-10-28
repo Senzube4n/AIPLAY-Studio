@@ -56,7 +56,7 @@
 import { MODEL_BUNDLES, ACE_VARIANTS } from '../shared/model-bundles.js';
 import { MODEL_PROFILES } from '../shared/model-profiles.js';
 import { fetchModelFile } from './engine/model-catalog.js';
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter, once } from "node:events";
 import path from "node:path";
@@ -125,21 +125,20 @@ const forCard = (files) => {
     .map((f) => (light && f.light) || (amd && f.amd) || f);
 };
 /**
- * The one shelf that is NOT models/.
- *
- * comfyui_controlnet_aux keeps its weights inside its own clone rather than in
- * the engine's models tree, and that is the only place it looks for them — so a
- * DWPose file written to models/ would be ignored and downloaded again. This
- * helper exists so the fact is stated once, in the same shape as M(), instead
- * of a raw path turning up in a `dest` where it would read as a typo.
- *
- * Writing here is safe rather than a race: the pack's own custom_hf_download()
- * opens with `if not os.path.exists(model_path)`
- * (src/custom_controlnet_aux/util.py:297), so a file already in place is used
- * as it stands and nothing is fetched a second time.
+ * External comfyui_controlnet_aux reads its own ckpts/<repo>/<file> tree.
+ * Keep that destination for external-only models and existing aux installs.
+ * Only the three files supported by Studio's bundled H3 nodes may instead use
+ * the model shelf on a fresh install; a weight download must not create an
+ * incomplete custom-node package. Installing aux later does not move these
+ * files: restart Studio to select the legacy shelf, then explicitly copy or
+ * choose Download again.
  */
-const CK = (p) => path.join(config.comfyDir, "custom_nodes", "comfyui_controlnet_aux", "ckpts", p);
-
+const CK = (p, bundledH3 = false) => {
+  const pack = path.join(config.comfyDir, "custom_nodes", "comfyui_controlnet_aux");
+  const legacy = path.join(pack, "ckpts", p);
+  return !bundledH3 || existsSync(legacy) || existsSync(path.join(pack, "__init__.py"))
+    ? legacy : M(path.join("controlnet", "aiplay_preprocessors", p));
+};
 /**
  * The other shelf that is NOT models/ — and deliberately not inside the engine
  * at all.
@@ -855,8 +854,11 @@ export const CATALOG = [
         alt: ["minimax_h3_fun_controlnet_union_pruned_bf16.safetensors"] },
     ],
     note: "2.3 GB, one file in models/model_patches, loaded by ModelPatchLoader and applied by "
-      + "MiniMaxH3FunControlNetApply. Needs ComfyUI 0.35 or newer \u2014 this rig runs 0.36. The 4.22 GB bf16 "
-      + "conversion of the same patch counts as present if you already have it.",
+      + "MiniMaxH3FunControlNetApply. Studio's local H3 Source clip path extracts Depth (Small) or Pose "
+      + "with its bundled offline nodes; the selected estimator weights are a separate download. "
+      + "The API also accepts an already prepared control map. This guides structure, not guaranteed identity "
+      + "or source-pixel preservation. Check reports missing models or engine nodes before rendering. "
+      + "The 4.22 GB bf16 conversion of the same patch counts as present if you already have it.",
     /* NOT h3Requires(): a control video riding along with H3 was never run at
      * a smaller size, so this row keeps full size's floor while H3 itself
      * offers a smaller size on 8 to 11 GB cards, and says why. The numbers are
@@ -866,6 +868,59 @@ export const CATALOG = [
                 note: "The same H3 render with a control video alongside it; the patch is resident for the whole pass. "
                   + `Stays at ${H3_VRAM_FULL_GB} GB although H3 itself offers ${H3_TIERS[1].width}x${H3_TIERS[1].height} on `
                   + `${H3_TIERS[1].minGb} to ${H3_VRAM_FULL_GB - 1} GB cards: a control video riding along has not been measured at the smaller size.` },
+  },
+
+  {
+    id: "videoH3FunControlFull",
+    label: "Video clips — full-width H3 video-to-video control (6.81 GB)",
+    why: "The original full-width AdaLN control patch for H3 checkpoints such as Singularity V2. "
+      + "Studio checks the selected checkpoint header and chooses this separate patch only for the full-width form. "
+      + "It guides source structure; checkpoint compatibility does not establish output quality or a memory guarantee.",
+    licence: "MiniMax H3 Community Licence (a patch on H3's weights)",
+    home: "https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union",
+    /* Identical to the H3 rows above, deliberately: a patch cannot be freer
+     * than the weights it patches, and a reader should not have to cross-check
+     * two pages to learn that. */
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "A patch on MiniMax H3, so its Community Licence applies unchanged: rights only inside the Applicable "
+        + "Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. "
+        + "MiniMax's hosted API is available everywhere; it is running the open weights locally that is limited. "
+        + "The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible "
+        + "for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement \u00a7VI.4 (Intellectual Property); this patch is a derivative of H3",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "\u00a7V.4 \u2014 the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip driven by this patch is an H3 output and carries the same limit.",
+        "The footage you drive it WITH is your own affair: a control video you do not hold the rights to does not become yours by being re-rendered.",
+      ],
+      note: "A patch on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    addonFor: "video",
+    files: [{
+      url: "https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union/resolve/4d670e9e8f1c96b001a8b8ddec0a269de448a1b0/MiniMax-H3-Fun-Controlnet-Union.safetensors",
+      dest: M("model_patches/MiniMax-H3-Fun-Controlnet-Union.safetensors"),
+      bytes: 6_806_843_904,
+      sha256: "919a48acb525dc8fc70287fcd94ec1f5e5e289a77f1df14d01099c6ce204eb02",
+    }],
+    note: "The original publisher file, loaded by Studio's bundled AiplayH3FullControlPatchLoader. "
+      + "The loader preserves full-width timestep modulation and only converts the documented tensor layout "
+      + "(Q/K/V order and gated-MLP half swap). It does not pad a pruned basis or change the selected checkpoint. "
+      + "Download is optional; read H3's terms. Full-width control memory and output quality require a measured local test.",
+    /* NOT h3Requires(): a control video riding along with H3 was never run at
+     * a smaller size, so this row keeps full size's floor while H3 itself
+     * offers a smaller size on 8 to 11 GB cards, and says why. The numbers are
+     * h3tier.js's own (full size, the lab's card, the RAM floor, the RAM the
+     * lab measured with), so they move with H3's. */
+    requires: { vramMinGb: H3_VRAM_FULL_GB, vramRecGb: H3_LAB_CARD_GB, ramMinGb: H3_RAM_FLOOR_GB, ramRecGb: H3_RAM_MEASURED_GB,
+                note: "The full-width control patch adds 6.81 GB of weights. Peak memory has not been measured; the ordinary H3 size estimate excludes this patch and guide extraction." },
   },
 
   {
@@ -2550,34 +2605,32 @@ export const CATALOG = [
         + "the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked "
         + "above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. "
         + "In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to "
-        + "steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — "
+        + "steer carries the rendering model's own terms, including H3's territory terms when used with H3, "
         + "so this is narrower than it sounds. Read the chain yourself before relying on the skeleton "
         + "itself being licensed. Separately, and binding whoever trained the model rather than "
         + "whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms "
         + "of their own.",
     },
 
-    /* ⚠ THE DESTINATION IS INSIDE A CUSTOM NODE PACK, not models/. That is
-     * where comfyui_controlnet_aux looks, and the only place it looks — and
-     * pre-placing a file really does prevent the download rather than racing
-     * it: its own custom_hf_download() begins `if not os.path.exists(
-     * model_path)` (src/custom_controlnet_aux/util.py:297), so a file already
-     * sitting there is used as it stands. This is the OPPOSITE of the demucs
-     * entry a few hundred lines up, which lists no files at all precisely
-     * because demucs ignores anything we could put on disk and fetches its own
-     * bundles regardless. Two capabilities, two behaviours, both checked.
-     *
-     * It also gives this row an honest readiness for free: the path exists only
-     * once the node pack is cloned, so a machine without the pack reports these
-     * files missing instead of reporting ready and then failing inside the
-     * engine on a class_type nobody installed. */
+    /* CK prefers an existing comfyui_controlnet_aux shelf and otherwise uses
+     * models/controlnet/aiplay_preprocessors. The H3 nodes only read local
+     * TorchScript files; they never fetch weights. Check separately verifies
+     * both the catalogue files and the engine's actual node schemas. */
     files: [
       { url: `${HF}/hr16/yolox-onnx/resolve/a124b32c3b7c5cebda1c7cd96178f0f9d2050125/yolox_l.torchscript.pt`,
-        dest: CK("hr16/yolox-onnx/yolox_l.torchscript.pt"), bytes: 217697649 },
+        dest: CK("hr16/yolox-onnx/yolox_l.torchscript.pt", true), bytes: 217697649 },
       { url: `${HF}/hr16/DWPose-TorchScript-BatchSize5/resolve/359d662a9b33b73f6d0f21732baf8845f17bb4be/dw-ll_ucoco_384_bs5.torchscript.pt`,
-        dest: CK("hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt"), bytes: 135059124 },
+        dest: CK("hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt", true), bytes: 135059124 },
     ],
-    note: "353 MB, and 26.4 s to read a 121-frame 1280x704 clip on this rig. Both files are the TorchScript builds ON PURPOSE, and neither default would have picked them: the node's own default bbox detector is the ONNX one, and loading that drags in onnxruntime — which here is the CPU build the DAW's transcription depends on, so the wrong default breaks a feature in a different half of the app and nothing about a pose extraction would tell you why. ⚠ Needs the ComfyUI node pack comfyui_controlnet_aux (Fannovel16, Apache-2.0 — its LICENSE.txt was diffed against the canonical text and is identical, zero differences across the whole file); the files above live inside that pack's own ckpts/ folder, so this row cannot read ready until the pack is cloned. ⚠ And the limit the pose gate found: DWPose saw no figure in 43 of 121 flat-shaded anime output frames, because yolox is trained on photographs. It reads live footage well and drawings badly.",
+    note: "353 MB, two explicit TorchScript files. H3 Source clip / Pose uses Studio's bundled offline "
+      + "AiplayH3PoseGuide (Apache-2.0 source), without an ONNX backend or an automatic download. Existing aux "
+      + "installations keep their ckpts shelf; fresh H3 setups use models/controlnet/aiplay_preprocessors. "
+      + "The older 26.4 s / 121-frame 1280x704 measurement belongs to the separate pose gate, not this H3 path. "
+      + "That gate found no figure in 43 of 121 flat-shaded anime frames; photographic footage is a better source. "
+      + "Legacy VACE Pose separately requires comfyui_controlnet_aux (Apache-2.0 code). After adding aux later, "
+      + "restart Studio so this row selects that pack's ckpts shelf. Then copy existing H3 files to its matching "
+      + "ckpts/<repo> folders or choose Download again; a second copy may be needed. Studio does not move weights "
+      + "automatically. Source-code licensing does not settle the estimator weights' unread terms above.",
     requires: {
       vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
       note: "Small and quick beside everything else here — 26.4 s for 121 frames at 1280x704, measured "
@@ -2599,9 +2652,8 @@ export const CATALOG = [
    * sellable one; server/control/depth.js picks it unless asked, because the
    * node's OWN default is the Large model.
    *
-   * Destination as the DWPose row: inside comfyui_controlnet_aux's ckpts
-   * folder, where its loader looks first and downloads only if the file is
-   * absent (util.py:297), so a pre-placed file is used as it stands. */
+   * Small can use the bundled H3 shelf on a fresh setup. Large is external-aux-only
+   * and always keeps the original legacy ckpts destination. */
   {
     id: "depthPreprocess",
     group: "video",   // Models screen section: feeds the video / Motion look path, not music
@@ -2615,14 +2667,21 @@ export const CATALOG = [
       quote: "Depth-Anything-V2-Small model is under the Apache-2.0 license.",
       clause: "README, LICENSE section (DepthAnything/Depth-Anything-V2, main); Apache-2.0 §2",
       url: "https://github.com/DepthAnything/Depth-Anything-V2#license",
-      note: "Apache-2.0 §2 grants the usual rights over the Work and says nothing about generated material; a depth video is a measurement of a clip you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, settled Apache-2.0. The one thing to know: the Large model in the row beside this one is CC-BY-NC-4.0, and the card defaults to this one for exactly that reason.",
+      note: "Apache-2.0 §2 grants the usual rights over the Work and says nothing about generated material; a depth video is a measurement of a clip you supplied, and the clip it goes on to steer carries the rendering model's own terms, including H3's territory terms when used with H3. The one thing to know: the Large model in the row beside this one is CC-BY-NC-4.0, and the card defaults to this one for exactly that reason.",
     },
     files: [
       { url: `${HF}/depth-anything/Depth-Anything-V2-Small/resolve/03876f8651c73a60fe4c2c48294e09fcb6838fcf/depth_anything_v2_vits.pth`,
-        dest: CK("depth-anything/Depth-Anything-V2-Small/depth_anything_v2_vits.pth"), bytes: 99218434,
+        dest: CK("depth-anything/Depth-Anything-V2-Small/depth_anything_v2_vits.pth", true), bytes: 99218434,
         sha256: "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378" },
     ],
-    note: "99 MB. The destination is inside comfyui_controlnet_aux's own ckpts folder, where its loader looks first and downloads only if the file is absent — the same arrangement the DWPose row uses. ⚠ The node's own default is the LARGE model; server/control/depth.js picks this one unless asked, and the control card says which one made each depth video.",
+    note: "99 MB. H3 Source clip / Depth uses Studio's bundled offline AiplayH3DepthGuide and explicitly "
+      + "selects this Small model. Existing aux installations keep their ckpts shelf; fresh H3 setups use "
+      + "models/controlnet/aiplay_preprocessors. Missing weights are offered before rendering, never fetched by the node. "
+      + "The separate Motion look control card can also offer Large under its own terms; the H3 source path does not "
+      + "select or substitute Large. Legacy VACE Depth requires the separate comfyui_controlnet_aux node pack "
+      + "(Apache-2.0 code). After adding aux later, restart Studio so this row selects that pack's ckpts shelf. "
+      + "Then explicitly copy the existing Small file to its matching ckpts/<repo> folder or choose Download again; "
+      + "Studio does not move weights automatically.",
     requires: {
       vramMinGb: 2, vramRecGb: 4, ramMinGb: 8, ramRecGb: 16,
       note: "A ViT-S at 518 px per frame — small beside everything else here, and it runs before the "
@@ -2649,7 +2708,9 @@ export const CATALOG = [
         dest: CK("depth-anything/Depth-Anything-V2-Large/depth_anything_v2_vitl.pth"), bytes: 1341395338,
         sha256: "a7ea19fa0ed99244e67b624c72b8580b7e9553043245905be58796a608eb9345" },
     ],
-    note: "1.3 GB, optional, NON-COMMERCIAL. The Small row is the default and the sellable one.",
+    note: "1.3 GB, optional, NON-COMMERCIAL. The Small row is the default and the sellable one. "
+      + "Requires the external comfyui_controlnet_aux node pack (Apache-2.0 code); install it first. "
+      + "This file stays under that pack's ckpts folder. Studio's bundled H3 nodes do not support Large.",
     requires: {
       vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
       note: "A ViT-L at 518 px per frame; still well under the video model it runs before.",

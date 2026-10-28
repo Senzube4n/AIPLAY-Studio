@@ -3140,13 +3140,15 @@ export const TOOLS = [
         seconds: { type: "integer", description: "Direct clip length, 1–20 s (default 5). H3 is trained for about 4–15 s; longer requests are experimental. More than 20 s is clamped and reported in warnings. Continue a clip for more output." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
         height: { type: "integer", description: "Frame height." },
+        model_file: { type: "string", description: "Optional named video checkpoint from the installed Video model picker. Validated for this engine before check or render; omitted uses the saved/default selection." },
         first_frame: { type: "string", description: "An image name to open on (from list_images or a cover). Pinned at frame 0." },
         last_frame: { type: "string", description: "An image name to end on, pinned at the final frame. Ignored when `loop` is set." },
         /* ⚠ VIDEO-TO-VIDEO. A whole clip where a single opening picture goes.
          * The door refuses this with the catalogue row and `download_model`
          * named in the refusal when the patch is absent, so an assistant can
          * offer the download instead of reporting an unsupported option. */
-        source_video: { type: "string", description: "H3 ONLY — drive the whole render with an existing clip (a name from list_clips) instead of one opening picture: its motion and blocking are kept while the prompt restyles it, which is how live footage becomes another look. Needs the H3 Fun ControlNet patch (2.3 GB, catalogue id videoH3FunControl); without it the render is refused with that id and the tool to fetch it, rather than quietly ignoring the clip. The patch is a derivative of H3 and carries H3's territory clause." },
+        source_video: { type: "string", description: "H3 ONLY: an existing video name from list_clips to guide the render's motion and layout. Studio validates and conforms the source, then extracts depth or pose before rendering. This is structural guidance, not source-pixel or identity preservation. Needs the H3 Fun ControlNet patch (catalogue videoH3FunControl) and the selected preprocessing weights. Missing dependencies are reported before rendering." },
+        control_mode: { type: "string", enum: ["depth", "pose", "prepared"], description: "Source-video guidance: depth (default, Depth Anything V2 Small), pose (TorchScript DWPose), or prepared (the source is already a control map; no estimator). Prepared is for authored control videos, not ordinary RGB footage." },
         control_strength: { type: "number", description: "How hard the source clip steers the render, 0 to 2. Default 1. Lower follows the prompt more and the footage less." },
         control_start: { type: "number", description: "Fraction of the sampling run where the control begins, 0 to 1. Default 0." },
         control_end: { type: "number", description: "Fraction where it stops, 0 to 1. Default 1. Ending early lets the model finish freely, which loosens the copy." },
@@ -3303,9 +3305,12 @@ export const TOOLS = [
        * ignoring the footage. The route reads `sourceVideo`. */
       if (a.source_video) {
         body.sourceVideo = safeName(a.source_video, "clip");
-        if (Number.isFinite(a.control_strength)) body.controlStrength = a.control_strength;
-        if (Number.isFinite(a.control_start)) body.controlStart = a.control_start;
-        if (Number.isFinite(a.control_end)) body.controlEnd = a.control_end;
+      }
+      if (a.model_file !== undefined) body.modelFile = a.model_file;
+      // The common validator must see invalid or orphaned options too.
+      for (const [input, field] of [["control_mode", "controlMode"], ["control_strength", "controlStrength"],
+        ["control_start", "controlStart"], ["control_end", "controlEnd"]]) {
+        if (a[input] !== undefined) body[field] = a[input];
       }
       if (a.first_frame) body.fromCover = safeName(a.first_frame, "image");
       // Same field naming trap as fromCover: the route reads toCover/midUploads.
@@ -3346,6 +3351,8 @@ export const TOOLS = [
           character: c.character?.receipt ?? null,
           character_hint: c.character?.hint ?? null,
           sampler: c.sampler ?? null,
+          video_control: c.videoControl ?? null,
+          model_file: c.videoModels?.dit ?? null,
           /* What the song under the clip does on this engine (video-plain.js
            * songUnderSay): lip-sync on H3 with pictures, not on LTX. */
           soundtrack: c.songLine?.hint ?? null,
@@ -3359,11 +3366,13 @@ export const TOOLS = [
       const made = madeRows.map((c) => c.name);
       const checkpoint_receipts = Object.fromEntries(madeRows.filter((c) => c.meta?.h3Checkpoint)
         .map((c) => [c.name, c.meta.h3Checkpoint]));
+      const video_control_receipts = Object.fromEntries(madeRows.filter((c) => c.meta?.videoControl)
+        .map((c) => [c.name, c.meta.videoControl]));
       /* What the render changed from the request, and the RAM warning: the
        * door's own sentences (video-plain.js), the ones the page shows. */
       const warnings = (r.warnings || []).map((w) => w.text).filter(Boolean);
       // Its own failure has already thrown; see emptyResultNote in art-wait.js.
-      return { clips: made, checkpoint_receipts, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
+      return { clips: made, checkpoint_receipts, video_control_receipts, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
         ...(warnings.length ? { warnings } : {}),
         ...(r.character ? { character: r.character.receipt, character_hint: r.character.hint ?? undefined } : {}) };
     },
@@ -3385,6 +3394,7 @@ export const TOOLS = [
         name: c.name, starred:c.starred === true, track: c.track, seconds: c.meta?.clipSeconds ?? null,
         source: c.meta?.source ?? "generated", prompt: c.meta?.prompt ?? null,
         h3_checkpoint: c.meta?.h3Checkpoint ?? null,
+        video_control: c.meta?.videoControl ?? null,
       }));
     },
   },

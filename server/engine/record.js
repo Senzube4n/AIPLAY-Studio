@@ -43,6 +43,7 @@
 import { createHash } from "node:crypto";
 import { CATALOG, MODEL_TO_CAPABILITY } from "../models.js";
 import { classify } from "../customWorkflows.js";
+import { isH3ControlModelInput } from "../h3-control-models.js";
 
 /** A ComfyUI API-format link: ["<node id>", <output slot>]. */
 export const isLink = (v) =>
@@ -323,7 +324,7 @@ export function buildRecord(graph, ctx = {}) {
       if (k === "filename_prefix" && typeof v === "string") outputPrefixes.push(v);
       if ((k === "fps" || k === "frame_rate") && typeof v === "number") rates.push(v);
 
-      if (typeof v === "string" && (MODEL_INPUT_RE.test(k) || (cls === "AiplayH3ConditioningBridge" && k === "adapter"))) {
+      if (typeof v === "string" && (MODEL_INPUT_RE.test(k) || (["ModelPatchLoader", "AiplayH3FullControlPatchLoader"].includes(cls) && k === "name") || isH3ControlModelInput(cls, k) || (cls === "AiplayH3ConditioningBridge" && k === "adapter"))) {
         const entry = { node: id, class: cls, input: k, file: v, bytes: null, mtimeMs: null, sha256: null };
         if (k === "lora_name") {
           loras.push({

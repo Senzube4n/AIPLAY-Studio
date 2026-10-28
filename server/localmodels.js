@@ -19,6 +19,7 @@ import { readdir, stat, readFile, writeFile, mkdir } from "node:fs/promises";
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { isH3ControlModelInput } from "./h3-control-models.js";
 
 /** ComfyUI's model folder names, as listed in its own extra_model_paths
  *  example. Scanned in this order. */
@@ -219,9 +220,13 @@ export function resolveGraphModels(graph, files) {
   for (const [id, node] of Object.entries(graph)) {
     let next = null;
     for (const [input, value] of Object.entries(node?.inputs || {})) {
+      // Bundled guide nodes accept fixed basenames from their own controlnet
+      // layout. A generic model_name match on an upscaler is not that model.
+      if (isH3ControlModelInput(node.class_type, input)) continue;
       // `adapter` is shelf-specific only on Studio's conditioning-bridge node.
       if (input === "adapter" && node.class_type !== "AiplayH3ConditioningBridge") continue;
-      const folders = MODEL_INPUT_FOLDERS[input.replace(/\d+$/, "")];
+      const folders = ["ModelPatchLoader", "AiplayH3FullControlPatchLoader"].includes(node.class_type) && input === "name"
+        ? ["model_patches"] : MODEL_INPUT_FOLDERS[input.replace(/\d+$/, "")];
       if (!folders || typeof value !== "string") continue;
       const found = findShelfModel(files, folders, value);
       if (found && found.name !== value) (next ||= { ...node.inputs })[input] = found.name;
@@ -286,6 +291,7 @@ export function applyModelOverrides(graph, overrides) {
     let next = null;
     if (inputs && typeof inputs === "object") {
       for (const [k, v] of Object.entries(inputs)) {
+        if (isH3ControlModelInput(node.class_type, k)) continue;
         const modelInput = FILE_INPUT.test(k) || (node.class_type === "AiplayH3ConditioningBridge" && k === "adapter");
         if (typeof v === "string" && modelInput && names.includes(v)) (next ||= { ...inputs })[k] = overrides[v];
       }

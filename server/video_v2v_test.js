@@ -20,7 +20,10 @@
  */
 import assert from "node:assert";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { videoGraphH3 } from "./workflow.js";
+import { createH3VideoControl } from "./h3-video-control.js";
 
 let passed = 0, failed = 0;
 const ok = (what, cond, extra = "") => {
@@ -65,6 +68,18 @@ const base = { prompt: "a lego version", seed: 1, seconds: 5, width: 1344, heigh
     !g[30] && !g[33] && !g[34] && JSON.stringify(g[6].inputs.model) === JSON.stringify(["18", 0]));
 }
 {
+  const g = videoGraphH3({ ...base, controlVideo: "take.mp4", controlPatch: "MiniMax-H3-Fun-Controlnet-Union.safetensors",
+    controlPatchLoader: "AiplayH3FullControlPatchLoader" });
+  ok("an approved full-width patch uses its explicit original-format loader",
+    g[33]?.class_type === "AiplayH3FullControlPatchLoader" && g[33].inputs.name === "MiniMax-H3-Fun-Controlnet-Union.safetensors");
+  ok("the full-width loader still feeds the native control apply without changing its input semantics",
+    JSON.stringify(g[34].inputs.model_patch) === JSON.stringify(["33", 0]) && !g[34].inputs.source_video && !g[34].inputs.mask);
+  let refused = false;
+  try { videoGraphH3({ ...base, controlVideo: "take.mp4", controlPatch: PATCH, controlPatchLoader: "UnreviewedLoader" }); }
+  catch (error) { refused = /Unsupported H3 control patch loader/.test(error.message); }
+  ok("unknown control loader names are rejected rather than arbitrary node classes", refused);
+}
+{
   /* Half an instruction is not an instruction: a clip with no patch (or the
    * reverse) must render as an ordinary clip rather than half-applying. */
   const a = videoGraphH3({ ...base, controlVideo: "take.mp4" });
@@ -79,10 +94,12 @@ ok("art.js names every control field, because it names every field or loses it",
     .every((f) => new RegExp(`${f}: job\\.${f}`).test(art)));
 ok("...and the route puts them on the job",
   /controlVideo: control\.video/.test(index) && /controlPatch: control\.patch/.test(index));
+ok("check and create use the same source validator and carry its plan into the queue",
+  (index.match(/videoControlService\.check\(/g) || []).length === 2 && /\n\s+videoControl,/.test(index));
 ok("...and make_clip sends the field the route actually reads (`sourceVideo`)",
   /body\.sourceVideo = safeName\(a\.source_video, "clip"\)/.test(mcp));
 ok("...and offers the numbers behind it",
-  ["source_video", "control_strength", "control_start", "control_end"]
+  ["source_video", "control_mode", "control_strength", "control_start", "control_end"]
     .every((p) => new RegExp(`${p}: \\{ type:`).test(mcp)));
 
 /* ── the refusal is where the model gets offered ─────────────────────────── */
@@ -90,15 +107,42 @@ ok("...and offers the numbers behind it",
  * model to download to enable it, so that you only get it when you need it."
  * Asking for this without the patch IS that moment, so the refusal has to carry
  * the row and the tool rather than call the option unsupported. */
-ok("asking without the patch is refused with the catalogue row, its size and the tool",
-  /reason: "needs-model"/.test(index) && /download_model` id videoH3FunControl/.test(index)
-  && /needsModel: \{ id: "videoH3FunControl"/.test(index));
-ok("...and the refusal names the territory clause BEFORE 2.3 GB is fetched",
-  /territory clause/.test(index) && /region: row\?\.region\?\.excluded/.test(index));
-ok("...and a path where a clip name belongs is refused",
-  /Name a clip on this machine, not a path/.test(index));
-ok("...and LTX, which has no structural video input, is told which engine does",
-  /Video-to-video is H3's path/.test(index) && /reason: "control-engine"/.test(index));
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "aiplay-v2v-refusal-"));
+try {
+  const clipDir = path.join(fixture, "clips"), inputDir = path.join(fixture, "input");
+  fs.mkdirSync(clipDir); fs.mkdirSync(inputDir);
+  fs.writeFileSync(path.join(clipDir, "source.mp4"), "fixture video; the probe is supplied below");
+  const modelsDir = path.join(fixture, "models");
+  fs.mkdirSync(path.join(modelsDir, "diffusion_models"), { recursive: true });
+  fs.writeFileSync(path.join(modelsDir, "diffusion_models", "stock.safetensors"), "metadata fixture");
+  let runs = 0, nodeLookups = 0;
+  const region = ["European Union", "United Kingdom", "Republic of Korea", "United States of America"];
+  const service = createH3VideoControl({ clipDir, inputDir,
+    modelConfig: { modelsDir, comfy: { extraArgs: [] } },
+    selectCheckpoint: () => ({ file: "stock.safetensors", reference: false }),
+    inspectHeader: async () => ({ form: "stock-curve", bytes: 16, mtimeMs: 1, headerSha256: "f".repeat(64) }),
+    catalog: [{ id: "videoH3FunControl", label: "H3 Fun ControlNet", region: { excluded: region },
+      files: [{ dest: path.join(fixture, PATCH), bytes: 2_296_635_360 }] }],
+    engine: { run: async () => { runs++; }, objectInfo: async () => { nodeLookups++; } },
+    probe: async () => ({ width: 1280, height: 720, fps: 30, frames: 180, seconds: 6 }) });
+  const target = { engineKey: "h3", width: 1344, height: 768, frames: 124, fps: 24 };
+  const refusal = await service.check({ sourceVideo: "source.mp4" }, target).then(() => null, (error) => error);
+  ok("asking without the patch is refused with the catalogue row, its size and the tool",
+    refusal?.reason === "needs-model" && refusal.needsModel?.id === "videoH3FunControl"
+    && refusal.needsModel?.bytes === 2_296_635_360 && refusal.needsModel?.tool === "download_model");
+  ok("...and the refusal names the territory clause BEFORE 2.3 GB is fetched",
+    /territory clause/.test(refusal?.message || "") && JSON.stringify(refusal?.needsModel?.region) === JSON.stringify(region));
+  const badPath = await service.check({ sourceVideo: "../source.mp4" }, target).then(() => null, (error) => error);
+  ok("...and a path where a clip name belongs is refused",
+    badPath?.reason === "control-video" && /not a path/.test(badPath.message));
+  const wrongEngine = await service.check({ sourceVideo: "source.mp4" }, { ...target, engineKey: "ltx" }).then(() => null, (error) => error);
+  ok("...and LTX is told which engine offers this source-video path",
+    wrongEngine?.reason === "control-engine" && /H3's path/.test(wrongEngine.message));
+  ok("all of these refusals leave staging empty and make no engine or sampler call",
+    fs.readdirSync(inputDir).length === 0 && runs === 0 && nodeLookups === 0);
+} finally {
+  fs.rmSync(fixture, { recursive: true, force: true });
+}
 
 console.log(`\n  ${passed} passed, ${failed} failed`);
 assert.equal(failed, 0, `${failed} video-to-video pins failed`);

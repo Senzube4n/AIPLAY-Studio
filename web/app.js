@@ -4,6 +4,8 @@ import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { revealSetting } from './settings-sections.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
 import { mountH3RefMods } from './h3-refmods.js';
+import { mountH3VideoControl } from './h3-video-control.js';
+var h3VideoControl = null;
 import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
 import { updateLocalModelAccess } from './local-model-access.js';
 import { createVectorizer } from './vectorize-controls.js';
@@ -8981,6 +8983,7 @@ function vidPaint() {
   }
   $("vidEngine").value = cur;
   $("qVideoEngine").value = cur;
+  if (typeof h3VideoControl !== "undefined") h3VideoControl?.paint();
 
   /* Sizes are PER ENGINE and rebuilt on every switch. H3's native 1344x768 is
    * not a legal LTX size, and two of H3's four options quantise to something
@@ -10147,8 +10150,28 @@ const h3RefModPanel = mountH3RefMods($("vidH3Extras"), {
   getImages: () => state.refImages || [], onChange: () => vidPaint(),
 });
 globalThis.aiplayH3Extras = () => h3RefModPanel.spec();
+h3VideoControl = mountH3VideoControl($("vidControlField"), {
+  getEngine: () => $("vidEngine").value || state.video?.engine || "h3",
+  getRemote: () => !!state.remoteOnly || $("vidRenderWhere")?.value === "runpod",
+  getCustom: () => !!state.workflows?.assigned?.video,
+  getRecipe: () => !!state.videoRecipeLoaded,
+  getClips: () => state.clips || [], loadClips,
+  onChange: () => vidPaint(), offerModel,
+});
+globalThis.aiplayH3VideoControl = () => h3VideoControl.spec();
+globalThis.aiplayH3VideoControlCheck = (result, requested) => h3VideoControl.readiness(result, requested);
+/* Run before the RunPod capture handler, which otherwise consumes Render. */
+$("vidCreate")?.addEventListener("click", event => {
+  try { h3VideoControl.assertAllowed(); }
+  catch (error) {
+    event.preventDefault(); event.stopImmediatePropagation();
+    $("clipNote").textContent = error.message;
+  }
+}, true);
 
 function videoFriendRecipe() {
+  if (typeof globalThis.aiplayH3VideoControl === "function" && globalThis.aiplayH3VideoControl().sourceVideo)
+    throw new Error("Remove the source clip before sending this text-only friend recipe.");
   if (typeof globalThis.aiplayH3Extras === "function" && Object.keys(globalThis.aiplayH3Extras()).length)
     throw new Error("Clear reference caches and tweaks before sending this text-only recipe.");
   const recipeEngine = state.video?.engine || "ltx";
@@ -10204,6 +10227,7 @@ $("cbUseVideo")?.addEventListener("click",async()=>{
   if (!(await setVideoEngine(opened.video.engine))) return;
   if (cbOpenedVideo !== opened) return;
   const v=opened.video;
+  if (typeof h3VideoControl !== "undefined") h3VideoControl?.clear();
   $("vidPrompt").value=v.prompt; $("vidNeg").value=v.negative || ""; $("vidSeed").value=String(v.seed);
   Object.assign($("vidSecs"),{min:"1",max:"20",step:"any"});
   Object.assign($("vidSteps"),{min:"2",max:"40",step:"1"});
@@ -10220,6 +10244,9 @@ $("cbUseVideo")?.addEventListener("click",async()=>{
 });
 
 $("vidCreate").onclick = async () => {
+  let controlSpec;
+  try { controlSpec = h3VideoControl?.assertAllowed() || {}; }
+  catch (error) { $("clipNote").textContent = error.message; return; }
   if (!state.video?.enabled) {
     const go = await bottomDrawer({
       title: "Video is switched off",
@@ -10260,6 +10287,7 @@ $("vidCreate").onclick = async () => {
       body: JSON.stringify({
         action: "create",
         ...h3RefModPanel.spec(),
+        ...controlSpec,
         prompt: $("vidPrompt").value,
         title: $("vidFrom").selectedOptions[0]?.dataset.title || "",
         fromCover: $("vidFrom").value || undefined,
@@ -10312,6 +10340,7 @@ $("vidCreate").onclick = async () => {
         ...(state.videoRecipeLoaded ? {bridge:"off",bridgeAlpha:0} : {}),
       }),
     })).json();
+    h3VideoControl?.readiness(r, controlSpec);
     if (r.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("vidEst", r); else failSay(r); return; }
     if (typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst");
     /* What the server changed from the request, and the RAM line, in its words. */
@@ -22478,8 +22507,10 @@ function applyStatus(s) {
         /* Before the sampler starts, `progress` is genuinely 0 and the time is
          * going into loading ~19 GB of H3 weights. Saying so beats a bar that
          * sits at zero looking stuck — that load is most of a cold render. */
-        const left = pct > 8 ? Math.round((c.elapsed / (pct / 100)) - c.elapsed) : null;
-        $("vidNowNote").textContent = pct === 0
+        const left = !c.controlPhase && pct > 8 ? Math.round((c.elapsed / (pct / 100)) - c.elapsed) : null;
+        $("vidNowNote").textContent = c.controlPhase && c.note
+          ? `${fmt(c.elapsed)} elapsed · ${c.note}`
+          : pct === 0
           ? `${fmt(c.elapsed)} elapsed · loading the video model: this is most of a cold start`
           : `${fmt(c.elapsed)} elapsed`
             + (left != null ? ` · about ${fmt(left)} to go` : "")
@@ -23228,6 +23259,7 @@ for (const [id,category] of [['musicSaveTemplate','music'],['picturesSaveTemplat
       profile=plan.choices.find(p=>p.category==='pictures'&&p.settings.checkpoint===checkpoint);
       settings={prompt:$('imgPrompt').value,negative:$('imgNeg')?.value||'',width:Number($('imgW').value),height:Number($('imgH').value),steps:Number($('imgSteps').value),cfg:Number($(state.remoteOnly?'imgRunPodCfg':'imgCfg').value)};
     } else {
+      if (globalThis.aiplayH3VideoControl?.().sourceVideo) throw Error('Remove the source clip before saving a video template.');
       if($(state.remoteOnly?'vidRunPodModel':'vidEngine')?.value!=='ltx')throw Error('Creative video templates currently support the curated LTX workflow.');
       profile=plan.choices.find(p=>p.category==='video');settings={prompt:$('vidPrompt').value,seconds:Number($('vidSecs').value)};
     }

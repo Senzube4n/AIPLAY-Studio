@@ -186,8 +186,13 @@ async function check() {
   if (!note || !S || $("vidPanel")?.hidden) return;
   const [width, height] = sizeNow();
   const stepRow = $("vidSteps")?.closest(".pv");
+  const mine = ++asked;
+  let controlSpec;
+  try { controlSpec = typeof globalThis.aiplayH3VideoControl === "function" ? globalThis.aiplayH3VideoControl() : {}; }
+  catch (error) { note.textContent = error.message; note.hidden = false; return; }
   const body = {
     action: "check",
+    ...controlSpec,
     ...(typeof globalThis.aiplayH3Extras === "function" ? globalThis.aiplayH3Extras() : {}),
     prompt: $("vidPrompt")?.value || "",
     width: width || undefined, height: height || undefined,
@@ -204,7 +209,6 @@ async function check() {
      * names the one this render loads (the same rule as the render's own). */
     videoVae: videoVaeChosen(),
   };
-  const mine = ++asked;
   let r;
   try {
     r = await (await fetch("/api/video", {
@@ -212,6 +216,7 @@ async function check() {
     })).json();
   } catch { return; }
   if (mine !== asked || !r) return;
+  if (typeof globalThis.aiplayH3VideoControlCheck === "function") globalThis.aiplayH3VideoControlCheck(r, controlSpec);
   const lines = [];
   if (r.fit?.sentence) lines.push(r.fit.sentence);
   /* Each sentence has one place: the RAM line at the button, the reference
@@ -384,7 +389,8 @@ if (typeof document !== "undefined") {
   globalThis.aiplayVidSparse = sparseToSend;
   globalThis.aiplayVidAsk = askBeforeRender;
   const WATCH = new Set(["vidSize", "vidW", "vidH", "vidSecs", "vidSteps", "vidPrompt", "vidEngine", "vidSparse", "vidFrom", "vidTo",
-    "vidCharacter", "vidSndSong", "vidSndStart", "vidVideoVae"]);
+    "vidCharacter", "vidSndSong", "vidSndStart", "vidVideoVae", "vidControlSource", "vidControlMode",
+    "vidControlStrength", "vidControlStart", "vidControlEnd"]);
   const boot = () => {
     const again = (e) => {
       const id = e.target?.id;

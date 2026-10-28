@@ -3,7 +3,7 @@
 import { lstat, readFile, readdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { STUDIO_NODES_DIR, VENDORED_NODES, MARKER as STUDIO_COPY_MARKER } from "../comfy_nodes.js";
+import { STUDIO_NODES_DIR, STUDIO_NODE_PACKS, SHIPPED_NODE_FILE, MARKER as STUDIO_COPY_MARKER } from "../comfy_nodes.js";
 import { createComfyReleaseChecker, compareComfyVersions } from "../comfy-updates.js";
 import { COMFY_TAG } from "./pins.js";
 import { samePath, venvPython } from "./engine-packages.js";
@@ -57,7 +57,7 @@ export async function comfyUpdateEligibility(config, env = process.env) {
       if (!(await lstat(markerFile)).isFile()) return false;
       const copy = await readJson(markerFile);
       if (!copy || typeof copy.createdFolder !== "boolean" || !copy.files || typeof copy.files !== "object" || Array.isArray(copy.files)) return false;
-      const shipped = (await readdir(source)).filter(file => /\.py$|^LICENSE$/.test(file));
+      const shipped = (await readdir(source)).filter(file => SHIPPED_NODE_FILE.test(file));
       if (!shipped.length || Object.keys(copy.files).length !== shipped.length) return false;
       for (const file of shipped) {
         const original = await readFile(path.join(source, file));
@@ -80,7 +80,7 @@ export async function comfyUpdateEligibility(config, env = process.env) {
     for (const name of nodes) {
       if (STANDARD_NODES.has(name)) continue;
       if (bundled.has(name) && await sameFile(path.join(nodeRoot, name), path.join(STUDIO_NODES_DIR, name))) continue;
-      if (VENDORED_NODES.includes(name) && await studioFolder(name)) continue;
+      if (STUDIO_NODE_PACKS.includes(name) && await studioFolder(name)) continue;
       return foreign();
     }
   } catch { return foreign(); }

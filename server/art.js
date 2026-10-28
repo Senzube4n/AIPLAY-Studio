@@ -70,6 +70,7 @@ import { engine as engineDoor } from "./engine/client.js";
  * comes and goes only at a start (videoBlockCache asks again after each). */
 import { deployEpoch } from "./comfy_nodes.js";
 import { runRefMod } from "./refmod-run.js";
+import { videoControlTerminal } from "./h3-video-control.js";
 /* The minors rule, asked at the queue's door as well as the engine's: a
  * refusal here costs nothing and says so at once, before a job waits behind
  * music for the GPU. server/safety/minors.js is the rule. */
@@ -825,12 +826,13 @@ export class ArtRunner extends EventEmitter {
    * timed-lyrics interpreters when given. Tests pass a fake python (a Node
    * script) through it; nothing else does.
    */
-  constructor(comfy, jobs, { qwenStatus = qwenImageStatus, mossStatus = mossImageStatus, spawnPython = null } = {}) {
+  constructor(comfy, jobs, { qwenStatus = qwenImageStatus, mossStatus = mossImageStatus, spawnPython = null, videoControl = null } = {}) {
     super();
     this.comfy = comfy;
     this.jobs = jobs;
     this.qwenStatus = qwenStatus;
     this.mossStatus = mossStatus;
+    this.videoControl = videoControl;
     this.spawnPython = typeof spawnPython === "function" ? spawnPython : null;
     this.queue = [];
     this.current = null;
@@ -1205,7 +1207,7 @@ export class ArtRunner extends EventEmitter {
        * the Stop sentence, and the engine is not touched. An untargeted
        * interrupt here killed that other work, and the clip, never marked,
        * then found the engine quiet and rendered anyway. */
-      if (job.waitingForQuiet) {
+      if (job.waitingForQuiet || job.controlCpu) {
         job.cancelled = true; job.stopping = true; this.emit("update");
         return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: false, stopping: true };
       }
@@ -1235,6 +1237,10 @@ export class ArtRunner extends EventEmitter {
           job.cancelled = true; job.stopping = true; this.emit("update");
         }
       } else {
+        if (job.videoControl) {
+          job.cancelled = true; job.stopping = true; this.emit("update");
+          return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: false, stopping: true };
+        }
         /* Not on the engine yet (a preflight, a model load), or a door that
          * keeps no record: the old way, an interrupt, and the job is NOT
          * marked. Never throws: Comfy already being gone is a perfectly good
@@ -1292,7 +1298,7 @@ export class ArtRunner extends EventEmitter {
       }
       /* A clip still waiting for a quiet engine has no run to cancel: it is
        * marked, and its wait ends with the Stop sentence (stopCurrent). */
-      if (job?.waitingForQuiet) {
+      if (job?.waitingForQuiet || job?.controlCpu) {
         job.cancelled = true; job.stopping = true; out.stopping = true;
         this.emit("update");
       }
@@ -1463,6 +1469,7 @@ export class ArtRunner extends EventEmitter {
           /* What the bar alone cannot say: "fetching the separation model,
            * 336 MB, first run only", "model 2 of 4". */
           note: this.current.note || null,
+          controlPhase: this.current.controlPhase || null,
         },
         queuedKinds: this.queue.reduce((m, j) => (m[j.kind] = (m[j.kind] || 0) + 1, m), {}),
         // The mini queue's ETA inputs: what this session actually measured.
@@ -1506,6 +1513,9 @@ export class ArtRunner extends EventEmitter {
           /* A clip refused for a speed-up not on disk (#clip): the row to
            * download, which the page's model window opens (needsModel). */
           ...(j.error && j.needsModel ? { needsModel: j.needsModel, errorReason: j.errorReason || null } : {}),
+          ...(j.controlReceipt ? { videoControl: j.controlReceipt } : {}),
+          ...(j.controlRetained?.length ? { controlRetained: j.controlRetained.map((file) => path.basename(file)),
+            controlRecovery: "The engine outcome is uncertain. Inspect this job before retrying; its temporary control files were kept." } : {}),
         })),
         stats: this.stats || {},
         nextTitles: this.queue.slice(0, 3).map((j) => ({ kind: j.kind, title: j.title })),
@@ -1853,6 +1863,7 @@ export class ArtRunner extends EventEmitter {
               refModOptions: job.refMods?.length ? job.refModOptions : null,
               h3Tweaks: job.h3Tweaks || null,
               h3Checkpoint: job.h3Checkpoint || null,
+              videoControl: job.controlReceipt || null,
               audioTrack: job.audioTrack || null,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
@@ -2569,6 +2580,53 @@ export class ArtRunner extends EventEmitter {
    * expensive swap the app can make. Never while music is queued.
    */
   async #clip(job) {
+    if (!job.videoControl) return this.#clipCore(job);
+    if (!this.videoControl) throw new Error("Video control preparation is unavailable.");
+    if (assignedTo("video")) throw new Error("Video control requires the built-in H3 workflow. Unassign the custom Video workflow first.");
+    const missing = clipSpeedupNeeded(job);
+    if (missing) { job.preflightFailed = true; job.needsModel = missing.row; throw new Error(missing.error); }
+    let prepared;
+    job.controlOutcomeKnown = true;
+    try {
+      prepared = await this.videoControl.prepare(job.videoControl, { actor: job.actor, label: job.title, private: job.private,
+        cancelled: () => !!job.cancelled, onRun: (done) => { job.controlPreprocessRunId = done.runId ?? null; },
+        onStage: (stage) => {
+          job.controlCpu = stage === "cpu";
+          job.controlPhase = stage === "preprocess" ? "extract" : "prepare";
+          job.note = stage === "preprocess"
+            ? (job.videoControl.mode === "pose" ? "Extracting pose guide" : "Extracting depth guide")
+            : "Preparing control video";
+          this.progress = 0; this.emit("update");
+        } });
+      job.controlVideo = prepared.file;
+      job.controlPatch = prepared.patch;
+      job.controlPatchLoader = prepared.patchLoader || "ModelPatchLoader";
+      job.controlReceipt = prepared.receipt;
+      if (job.videoControl?.checkpoint) job.models = { ...job.models,
+        dit: job.videoControl.checkpoint.requested, ditRef: job.videoControl.checkpoint.requested };
+      job.controlPhase = "render"; job.note = "Rendering controlled video";
+      this.progress = 0; this.emit("update");
+      // These were rejected if active at acceptance. Keep the queued native
+      // control recipe off even if unrelated saved defaults change meanwhile.
+      job.bridge = "off"; job.bridgeAlpha = 0; job.sparse = "off"; job.blockCache = false;
+      return await this.#clipCore(job);
+    } catch (error) {
+      if (!job.runId && job.controlPreprocessRunId) job.runId = job.controlPreprocessRunId;
+      if (error.needsModel) job.needsModel = error.needsModel;
+      if (error.reason) job.errorReason = error.reason;
+      if (error.controlRetained) job.controlRetained = error.controlRetained;
+      throw error;
+    } finally {
+      job.controlCpu = false;
+      if (prepared) {
+        const result = await prepared.cleanup({ known: job.controlOutcomeKnown });
+        if (result?.retained?.length) job.controlRetained = result.retained;
+      }
+    }
+  }
+
+  async #clipCore(job) {
+    if (job.videoControl && this.videoControl?.revalidate) await this.videoControl.revalidate(job.videoControl);
     await mkdir(CLIP_DIR, { recursive: true });
     /* Two callers, two shapes.
      *
@@ -2587,6 +2645,8 @@ export class ArtRunner extends EventEmitter {
     /* The receiver accepted a signed built-in graph. A custom workflow chosen
      * while this job waits behind music cannot replace its model contract. */
     const customVideo = job.collabVideoBase ? null : assignedTo("video");
+    if (customVideo && job.videoControl)
+      throw new Error("Video control requires the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo && job.h3ModelBuildExplicit)
       throw new Error("An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo && (job.refMods?.length || job.h3Tweaks))
@@ -2651,6 +2711,7 @@ export class ArtRunner extends EventEmitter {
        * did nothing would look like the model ignoring the footage. */
       controlVideo: job.controlVideo,
       controlPatch: job.controlPatch,
+      controlPatchLoader: job.controlPatchLoader,
       controlStrength: job.controlStrength,
       controlStart: job.controlStart,
       controlEnd: job.controlEnd,
@@ -2738,7 +2799,8 @@ export class ArtRunner extends EventEmitter {
      * afterwards: the music model is gone, Qwen is not warm. "auto" on AMD,
      * Intel and the CPU, as main has it; on NVIDIA and a card nobody could
      * read only when the person set "always". */
-    if (clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor })
+    // Control extraction and sampling share one hold and one engine process.
+    if (!job.videoControl && clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor })
         && engineDoor.ranSinceStart() > 0 && typeof this.comfy?.restart === "function") {
       /* ...but never under someone else's work. A restart kills whatever the
        * engine is running, so a song rendering at that moment, or a graph an
@@ -2802,9 +2864,15 @@ export class ArtRunner extends EventEmitter {
         job.errorReason = said.reason;
         return new Error(said.sentence);
       };
+      if (job.videoControl) {
+        if (job.cancelled) throw new Error(STOPPED_ERROR);
+        job.controlCpu = false;
+        job.controlOutcomeKnown = false;
+      }
       const done = await engineDoor.run({
       private: job.private === true,
         graph, actor: job.actor, via: "art.clip",
+        cancelled: job.videoControl ? (submittedGraph) => { this.videoControl?.assertSelection?.(job.videoControl, submittedGraph); return !!job.cancelled; } : undefined,
         safetyContext: job.safetyContext, safetyFlags: job.safetyFlags,
         clientId: this.clientId, timeoutMs: budgetMs, pollMs: 1000,
         label: job.title || job.file,
@@ -2813,11 +2881,16 @@ export class ArtRunner extends EventEmitter {
         // before the POST, so the join is index.js's `generate` seam and runId.
         adopt: false,
       }).catch((err) => {
+        if (job.videoControl && /ComfyUI rejected the job:/.test(err?.message || "")) job.controlOutcomeKnown = true;
         /* ⚠ The engine door's minors refusal travels UNCHANGED: its `safety`
          * flag is what wipes the job's words below and answers 422. */
         if (err?.safety) throw err;
         throw failed(String(err?.message || err), err?.runId);
       });
+      if (job.videoControl) {
+        job.controlOutcomeKnown = videoControlTerminal(done);
+        job.controlCpu = job.controlOutcomeKnown;
+      }
       job.runId = done.runId;
       if (done.status !== "completed") {
         throw failed(done.error || `the engine did not finish (${done.status})`);

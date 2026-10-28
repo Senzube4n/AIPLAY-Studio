@@ -1,0 +1,13 @@
+/* Source footage belongs to the Video form, with no extra panel or modal. */
+#vidControlField[hidden],
+#vidControlField [hidden] { display: none !important; }
+#vidControlField .h3v-drop { border: 1px solid var(--hair); border-radius: 12px; padding: 10px; }
+#vidControlField .h3v-drop.over { border-color: var(--primary); background: var(--raise); }
+#vidControlField .h3v-card { display: grid; gap: 8px; margin-bottom: 8px; min-width: 0; }
+#vidControlField video { width: 100%; max-height: 170px; border-radius: 8px; background: var(--panel); }
+#vidControlField .h3v-name { overflow-wrap: anywhere; flex: 1; min-width: 0; }
+#vidControlField .h3v-menu { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; margin-top: 8px; }
+#vidControlField .h3v-menu button { white-space: normal; overflow-wrap: anywhere; text-align: left; }
+#vidControlField .params { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+#vidControlField .in2 { min-width: 0; max-width: 100%; width: 90px; }
+#vidPanel.assist-on #vidControlOptions { display: none !important; }
