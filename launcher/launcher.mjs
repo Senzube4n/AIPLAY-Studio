@@ -36,8 +36,7 @@ import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 /* What the system check SAYS (RAM, ffmpeg, a weak card, Music only, Studio's
  * packages): pure, so server/installer_test.js can call it. */
 import { ramItem, ffmpegItem, cardAdvice, musicOnlyNote, studioPackagesItem, yue2ComfyVerdict } from "./checks.mjs";
-/* The launch modes that are Advanced only (RunPod GPU, the owner's decision of
- * 2026-09-26), judged by the level Studio itself opens on. */
+/* Launch-mode availability is separate from Studio's saved detail level. */
 import { modeAllowed, modesForLevel, launcherLevel, advancedOnlyLine } from "./checks.mjs";
 /* "Try again" beside Studio's own packages: the engine installer's --studio-packages, the same run MCP's setup_feature makes. */
 import { runStudioPackages } from "../server/setup/engine-packages.js";
@@ -460,7 +459,7 @@ async function launch(mode) {
   if (child) throw new Error("Studio is already running from this launcher.");
   if (busyInstalling()) throw new Error("Wait for the engine install to finish.");
   if (!["full", "music", "cloud", "runpod"].includes(mode)) throw new Error("Unknown mode.");
-  /* RunPod GPU is Advanced only: a Simple install is not offered it, here either. */
+  /* Keep availability checks shared with the cards and favourites. */
   if (!modeAllowed(mode, await studioLevel())) throw new Error(advancedOnlyLine(MODE_NAME[mode] || mode));
 
   setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
@@ -923,9 +922,7 @@ function showWindow() {
  * every time the launcher starts (settings.json launcherAutoLaunch). */
 const LAUNCH_MODES = ["full", "music", "cloud", "runpod"];
 const MODE_NAME = { full: "Full Studio", music: "Music only", cloud: "Comfy API", runpod: "RunPod GPU" };
-/* A favourite this level is not offered (a RunPod star saved in Advanced, on
- * an install now on Simple) reads as none: it is not started, the page shows
- * no star, and the saved value stays for the day the level is Advanced again. */
+/* A saved favourite uses the same availability rule as a manual launch. */
 /** The network access key, made once and kept, so a phone stays paired. */
 async function lanKey(saved) {
   if (typeof saved.launcherLanKey === "string" && /^[A-Za-z0-9_-]{24,128}$/.test(saved.launcherLanKey)) return saved.launcherLanKey;

@@ -739,22 +739,47 @@ path.
 Studio shows a red banner: *"This install is running about 5× slower than it
 should."* It names the torch version it found.
 
-Update your NVIDIA driver first — a CUDA 13 build needs a recent one. Then
-reinstall PyTorch into **the Python that ComfyUI uses**, not any other Python on
-your machine. For a portable install:
+First check **the Python that ComfyUI uses**. A driver visible to Studio does
+not prove that this Python has a working GPU build. From Studio's folder:
 
 ```
-D:\AI\ComfyUI_windows_portable\python_embeded\python.exe -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+node scripts/diagnose-engine.mjs > gpu-report.json
+```
+
+If no engine is saved, add `--python "path-to-ComfyUI-python.exe" --backend nvidia`.
+This read-only report includes Python and torch versions, CUDA runtime, physical
+GPU/driver, a small GPU calculation, and the original failure. It contains local
+paths; review it before sharing. It does not include saved provider keys.
+`nvidia-smi`'s CUDA number is the version the driver supports, not the CUDA build
+in ComfyUI's Python.
+
+Fresh Studio-owned NVIDIA engines pin torch **2.14.1**, torchvision **0.29.1**
+and torchaudio **2.11.0** to one explicit CUDA index. ComfyUI's requirements
+cannot replace that selected stack. CUDA 13.0 stays the modern performance
+profile; older supported GPUs/drivers use CUDA 12.6, which may lack the fused
+music kernels. Blackwell cards require the modern profile. RunPod setup keeps
+its selected container's own torch stack rather than replacing it with these
+local pins.
+
+For a manually managed modern NVIDIA portable install with a supported Python
+and driver, the explicit stack is:
+
+```
+D:\AI\ComfyUI_windows_portable\python_embeded\python.exe -m pip install torch==2.14.1+cu130 torchvision==0.29.1+cu130 torchaudio==2.11.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 For a venv install:
 
 ```
-D:\AI\my-comfy\venv\Scripts\python.exe -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+D:\AI\my-comfy\venv\Scripts\python.exe -m pip install torch==2.14.1+cu130 torchvision==0.29.1+cu130 torchaudio==2.11.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 Adjust the path to your own folder. It is a few gigabytes. Restart Studio
 afterwards and check `/api/status` again.
+
+These are compatible wheel selections, not certification of every model or
+portable Python version. Check [PyTorch's published versions](https://pytorch.org/get-started/previous-versions/)
+and [TorchAudio's separate stable-ABI matrix](https://docs.pytorch.org/audio/stable/installation).
 
 ### Why Studio uses three different Pythons
 

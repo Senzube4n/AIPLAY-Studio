@@ -22,8 +22,9 @@
  * points it at a closed port to reach the failure path without a network).
  *
  * WHAT IT RUNS is ComfyUI's own manual-install instructions, read out of the
- * README of the ComfyUI it just downloaded (the constants below are only the
- * fallback). Python comes from uv (astral-sh/uv), which fetches a standalone
+ * README of the ComfyUI it just downloaded, except NVIDIA: that stack uses
+ * Studio's pinned CUDA profiles (server/setup/torch-runtime.js). Python comes
+ * from uv (astral-sh/uv), which fetches a standalone
  * interpreter, so no system Python is needed. After ComfyUI's requirements it
  * adds Studio's own packages (server/setup/studio-packages.js: OpenCV, librosa,
  * soundfile, SciPy), only the ones that do not import, under a constraints
@@ -77,6 +78,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { COMFY_TAG, QWEN_COMFY_TAG, comfyArchiveUrl, keptUvPath, UV_PYTHON_INSTALL_ARGS, UV_PRIVATE_ENV } from "../server/setup/pins.js";
 import { ensureUv } from "../server/setup/uv.js";
+import { nvidiaRuntimePlan, parseNvidiaSmi, nvidiaConstraints, torchProbeCode, torchProbeFailure } from "../server/setup/torch-runtime.js";
 import {
   STUDIO_PACKAGES, STUDIO_MODULES, MODULES_PROBE, LEFTOVERS_PROBE, probeLine, missingModules, studioWarning, addStudioPackages,
 } from "../server/setup/studio-packages.js";
@@ -86,6 +88,8 @@ const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i > 
 
 const BACKEND = String(arg("backend") || "").toLowerCase();
 const GPU_NAME = arg("gpu-name") || "";
+const GPU_CAPABILITY = arg("gpu-capability");
+const DRIVER_VERSION = arg("driver-version") || "";
 const QWEN_COMPATIBLE = process.argv.includes("--qwen-compatible");
 const STAGE_ONLY = process.argv.includes("--stage-only");
 const HAS_COMFY_TAG = process.argv.some(arg => arg === "--comfy-tag" || arg.startsWith("--comfy-tag="));
@@ -133,8 +137,6 @@ function step(id) {
 /* ── the commands ComfyUI's README gives, with today's text as the fallback ── */
 
 const FALLBACK = {
-  nvidia: "pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu130",
-  nvidiaOld: "pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu126",
   amdWin: 'pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-all]==2.13.0+rocm10.0.0" "torchvision[device-all]==0.28.0+rocm10.0.0" "torchaudio==2.11.0.2+rocm10.0.0"',
   amdLinux: "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2",
   intel: "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu",
@@ -175,12 +177,10 @@ function pipArgs(cmd) {
   return (cmd.replace(/^pip install\s+/, "").match(/"[^"]*"|\S+/g) || []).map((t) => t.replace(/^"|"$/g, ""));
 }
 
-const OLD_NVIDIA = /\b(gtx\s*(9\d\d|10\d\d)|titan\s*(x|xp)\b|quadro\s*[pkm]\d|tesla\s*[pkm]\d)/i;
-
-function torchCommand(readme) {
+function torchCommand(readme, hardware = {}) {
   if (BACKEND === "nvidia") {
-    if (OLD_NVIDIA.test(GPU_NAME)) return { cmd: FALLBACK.nvidiaOld, python: "3.12", why: "older NVIDIA card: CUDA 12.6 build" };
-    return { cmd: readmeCommand(readme, /NVIDIA/i) || FALLBACK.nvidia, python: "3.13" };
+    return nvidiaRuntimePlan({ gpuName: GPU_NAME, capability: GPU_CAPABILITY || hardware.capability,
+      driverVersion: DRIVER_VERSION || hardware.driverVersion });
   }
   if (BACKEND === "amd") {
     if (!WIN) return { cmd: readmeCommand(readme, /AMD GPUs \(Linux\)/i) || FALLBACK.amdLinux, python: "3.13" };
@@ -191,6 +191,23 @@ function torchCommand(readme) {
   }
   if (BACKEND === "intel") return { cmd: readmeCommand(readme, /Intel GPUs/i) || FALLBACK.intel, python: "3.13" };
   return { cmd: FALLBACK.cpu, python: "3.13" };
+}
+
+/** Driver/capability data comes from the selected physical GPU, independently
+ * of Python. Failure to query is reported but does not block installation. */
+async function nvidiaHardware() {
+  if (BACKEND !== "nvidia") return {};
+  try {
+    const out = await run("nvidia-smi", ["--query-gpu=name,compute_cap,driver_version", "--format=csv,noheader,nounits"],
+      { windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 });
+    const selected = parseNvidiaSmi(out.stdout, GPU_NAME);
+    if (selected) {
+      log(`NVIDIA: ${selected.name}; compute capability ${selected.capability}; driver ${selected.driverVersion}.`);
+      return selected;
+    }
+    log("nvidia-smi did not identify the selected GPU; using the named GPU profile.");
+  } catch (error) { log(`Could not read NVIDIA driver/capability: ${error.code || error.message}. Using the named GPU profile.`); }
+  return {};
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -348,6 +365,11 @@ async function install() {
       throw new Error(`${ROOT} was not made as an unfinished staged engine, so it was left alone. Choose a new staging folder.`);
     }
   }
+  // A known unsupported GPU/driver should fail before replacing any existing
+  // engine or fetching packages. Unknown hardware remains probe-verified.
+  const hardware = await nvidiaHardware();
+  const preflight = BACKEND === "nvidia" ? torchCommand("", hardware) : null;
+  if (preflight?.blocked && !process.env.AIPLAY_ENGINE_TORCH_CMD) throw new Error(preflight.blocked);
   const CACHE_MARK = path.join(CACHE, ".aiplay-engine-cache");
   if (existsSync(ROOT) && !existsSync(MARKER) && (await readdir(ROOT)).length) {
     throw new Error(`${ROOT} already exists and was not made by this installer, so it was left alone. Move it, or set AIPLAY_ENGINE_DIR to another folder.`);
@@ -400,7 +422,7 @@ async function install() {
   const comfyDir = path.join(ROOT, "ComfyUI");
   if (!existsSync(path.join(comfyDir, "main.py"))) throw new Error("The ComfyUI download has no main.py.");
   const readme = await readFile(path.join(comfyDir, "README.md"), "utf-8").catch(() => "");
-  const plan = torchCommand(readme);
+  const plan = torchCommand(readme, hardware);
 
   step("python");
   const venv = path.join(ROOT, "venv");
@@ -417,35 +439,33 @@ async function install() {
    * not cover, and for testing the failure path. */
   await pip(pipArgs(process.env.AIPLAY_ENGINE_TORCH_CMD || plan.cmd));
 
+  // ComfyUI's unpinned requirements must not replace the CUDA build just
+  // selected. Pin only the torch family here, leaving other dependencies free
+  // to resolve. Studio's later package step freezes the complete environment.
+  const runtimeConstraints = BACKEND === "nvidia" ? path.join(ROOT, "torch-constraints.txt") : null;
+  if (runtimeConstraints) await writeFile(runtimeConstraints, nvidiaConstraints(await pipFreeze(py)));
+
   step("deps");
-  await pip(["-r", path.join(comfyDir, "requirements.txt")]);
+  await pip(["-r", path.join(comfyDir, "requirements.txt"), ...(runtimeConstraints ? ["-c", runtimeConstraints] : [])]);
 
   step("studio");
   const studioRun = await installStudioPackages(py, pip);
   if (!studioRun.ok) log(`\n(!) Studio's own packages did not install: ${studioRun.error}. The engine install continues; this is reported at the end.`);
 
   step("verify");
-  const probe = [
-    "import json, torch",
-    "v = torch.version",
-    "hip = getattr(v, 'hip', None) or getattr(v, 'rocm', None)",
-    "xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()",
-    "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()",
-    "cuda = torch.cuda.is_available()",
-    "name = torch.cuda.get_device_name(0) if cuda else (torch.xpu.get_device_name(0) if xpu else '')",
-    "print('@@probe ' + json.dumps({'version': torch.__version__, 'backend': 'rocm' if hip else 'cuda' if v.cuda else 'xpu' if xpu else 'cpu', 'gpu': cuda or xpu or mps, 'name': name}))",
-  ].join("\n");
+  const probe = torchProbeCode(BACKEND);
   let probed = null;
   const out = await run(py, ["-s", "-c", probe], { env: { ...process.env, ...pipEnv }, timeout: 300_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
-    .catch((e) => { throw new Error(`PyTorch was installed but does not import:\n${String(e.stderr || e.message).trim().split("\n").slice(-12).join("\n")}`); });
+    .catch((e) => { throw new Error(`The PyTorch runtime probe could not complete with ${py}:\n${String(e.stderr || e.message).trim().split("\n").slice(-12).join("\n")}`); });
   for (const l of out.stdout.split(/\r?\n/)) if (l.startsWith("@@probe ")) probed = JSON.parse(l.slice(8));
   if (!probed) throw new Error("PyTorch did not report its build.");
-  log(`torch ${probed.version} (${probed.backend})${probed.name ? ` sees ${probed.name}` : ""}`);
-  if (BACKEND !== "cpu" && !probed.gpu) {
-    const hint = BACKEND === "nvidia" ? "Update the NVIDIA driver (CUDA 13 needs a 580-series driver or newer), then try again — or choose CPU."
-      : BACKEND === "amd" ? "Update the AMD Adrenalin driver and use Windows 11 (or a ROCm-supported Linux), then try again — or choose CPU. RX 6000-series and older cards may not be supported by ROCm."
-        : "Update the Intel Arc driver, then try again — or choose CPU.";
-    throw new Error(`PyTorch ${probed.version} installed, but it cannot see a ${BACKEND.toUpperCase()} graphics card. ${hint}${out.stderr ? `\n${out.stderr.trim().split("\n").slice(-6).join("\n")}` : ""}`);
+  log(`Python ${probed.pythonVersion}: ${probed.python}`);
+  log(`torch ${probed.version} (${probed.backend}${probed.cudaVersion ? ` ${probed.cudaVersion}` : ""})${probed.name ? ` sees ${probed.name}` : ""}`);
+  const failure = torchProbeFailure(probed, BACKEND, { driverVersion: DRIVER_VERSION || hardware.driverVersion, python: py });
+  if (failure) throw new Error(`${failure}${out.stderr ? `\n${out.stderr.trim().split("\n").slice(-6).join("\n")}` : ""}`);
+  if (runtimeConstraints) {
+    const pinned = await readFile(runtimeConstraints, "utf8");
+    if (nvidiaConstraints(await pipFreeze(py)) !== pinned) throw new Error("The NVIDIA PyTorch stack changed during requirements installation. The staged engine was not activated; retry with its pinned runtime profile.");
   }
   /* Studio's own packages, imported for real. Reported, not fatal: the engine
    * renders without them, and deleting a working engine over OpenCV would cost
@@ -506,7 +526,10 @@ async function install() {
     rig: ROOT, python: py, gpu,
     torchBackend: probed.backend, torchVersion: probed.version,
     comfyExtraArgs: flags, launchFrom: `Studio's own ComfyUI (${tag}, ${BACKEND})`,
-    engineInstall: { backend: BACKEND, comfy: tag, torch: probed.version, studioPackages: studioRecord(studio), at: new Date().toISOString() },
+    engineInstall: { backend: BACKEND, comfy: tag, torch: probed.version,
+      runtime: { python: probed.pythonVersion, cuda: probed.cudaVersion, capability: probed.capability, driver: hardware.driverVersion || DRIVER_VERSION || null,
+        profile: process.env.AIPLAY_ENGINE_TORCH_CMD ? "custom" : plan.index || null, smoke: probed.smoke },
+      studioPackages: studioRecord(studio), at: new Date().toISOString() },
   };
   const done = { ...installed, backend: BACKEND, torch: probed.version, comfy: tag,
     ...(STAGE_ONLY ? { stageOnly: true } : {}), ...(QWEN_COMPATIBLE ? { qwenNodes: QWEN_NODES } : {}),

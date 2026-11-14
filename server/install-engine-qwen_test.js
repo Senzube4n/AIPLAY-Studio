@@ -137,6 +137,17 @@ test("invalid options cannot clean a completed engine", () => {
   }
 });
 
+test("known unsupported NVIDIA hardware refuses before replacing a finished engine", () => {
+  const root = path.join(tmp, "unsupported-nvidia");
+  mark(root, { complete: true, comfy: COMFY_TAG });
+  writeFileSync(path.join(root, "keep.txt"), "keep");
+  const result = run(["--backend", "nvidia", "--gpu-capability", "3.5"], { AIPLAY_APPDATA: path.join(tmp, "unsupported-data"), AIPLAY_ENGINE_DIR: root });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(record(result.stdout, "error").message, /compute capability 3\.5.*5\.0 minimum/);
+  assert.equal(record(result.stdout, "error").cleaned, false);
+  assert.equal(readFileSync(path.join(root, "keep.txt"), "utf8"), "keep");
+});
+
 /* Real Python loads a tiny Comfy extension fixture. Everything that downloads,
  * installs packages or touches hardware is faked in the installer subprocess;
  * the actual Qwen import/schema probe still runs, including its failure path. */
@@ -151,6 +162,7 @@ const { EventEmitter } = require('node:events');
 const { promisify } = require('node:util');
 const { syncBuiltinESMExports } = require('node:module');
 const originalExecFile = cp.execFile;
+const nvidia = process.env.FIXTURE_NVIDIA === '1';
 const log = entry => fs.appendFileSync(process.env.FIXTURE_CALLS, JSON.stringify(entry) + '\\n');
 fs.promises.statfs = async () => ({ bavail: 100, bsize: 1024 ** 3 });
 global.fetch = async () => new Response(fs.readFileSync(process.env.FIXTURE_ARCHIVE), { status: 200 });
@@ -162,10 +174,13 @@ cp.execFile = function(command, args, options, callback) {
     return originalExecFile(process.env.FIXTURE_PYTHON, args, options, callback);
   }
   let stdout = '';
-  if (code.includes('@@modules')) stdout = '@@modules ' + JSON.stringify({ cv2: process.env.FIXTURE_STUDIO_MISSING === '1' ? 'fixture OpenCV import failed' : true, librosa: true, soundfile: true, scipy: true });
-  else if (code.includes('@@versions')) stdout = '@@versions {"torch":"2.9.0+cpu","numpy":"2.2.6"}';
-  else if (code.includes('@@probe')) stdout = '@@probe {"version":"2.9.0+cpu","backend":"cpu","gpu":false,"name":""}';
-  else if (args.includes('freeze')) stdout = 'torch==2.9.0+cpu\\nnumpy==2.2.6\\n';
+  if (command === 'nvidia-smi') stdout = 'NVIDIA GeForce RTX 4070, 8.9, 591.74\\n';
+  else if (code.includes('@@modules')) stdout = '@@modules ' + JSON.stringify({ cv2: process.env.FIXTURE_STUDIO_MISSING === '1' ? 'fixture OpenCV import failed' : true, librosa: true, soundfile: true, scipy: true });
+  else if (code.includes('@@versions')) stdout = '@@versions ' + JSON.stringify({ torch: nvidia ? '2.14.1+cu130' : '2.9.0+cpu', numpy: '2.2.6' });
+  else if (code.includes('@@probe')) stdout = '@@probe ' + JSON.stringify({ version: nvidia ? '2.14.1+cu130' : '2.9.0+cpu', backend: nvidia ? 'cuda' : 'cpu', cudaVersion: nvidia ? '13.0' : null,
+    gpu: nvidia && !process.env.FIXTURE_RUNTIME_ERROR, name: nvidia ? 'NVIDIA GeForce RTX 4070' : '', smoke: !process.env.FIXTURE_RUNTIME_ERROR,
+    error: process.env.FIXTURE_RUNTIME_ERROR || undefined, capability: nvidia ? '8.9' : null, python: command, pythonVersion: '3.13.9' });
+  else if (args.includes('freeze')) stdout = nvidia ? 'torch==2.14.1+cu130\\ntorchvision==0.29.1+cu130\\ntorchaudio==2.11.0+cu130\\nnumpy==2.2.6\\n' : 'torch==2.9.0+cpu\\nnumpy==2.2.6\\n';
   process.nextTick(() => callback(null, stdout, ''));
   return new EventEmitter();
 };
@@ -189,7 +204,7 @@ cp.spawn = function(command, args, options) {
 syncBuiltinESMExports();
 `);
 
-function fixture(name, { missing = false, broken = false, incomplete = false, studioMissing = false, defer = false } = {}) {
+function fixture(name, { missing = false, broken = false, incomplete = false, studioMissing = false, defer = false, nvidia = false, runtimeError = '' } = {}) {
   const base = path.join(tmp, name);
   const source = path.join(base, "archive", "ComfyUI-v0.37.0");
   const root = path.join(base, "new-engine");
@@ -234,6 +249,7 @@ async def comfy_entrypoint(): return Extension()
     NODE_OPTIONS: `--require "${hook.replace(/\\/g, "/")}"`,
     FIXTURE_ARCHIVE: archive, FIXTURE_PYTHON: python, FIXTURE_CALLS: calls,
     FIXTURE_STUDIO_MISSING: studioMissing ? "1" : "0",
+    FIXTURE_NVIDIA: nvidia ? "1" : "0", FIXTURE_RUNTIME_ERROR: runtimeError,
   };
   const verifyUntouched = () => {
     assert.equal(readFileSync(path.join(appData, "settings.json"), "utf8"), settings, "settings stay byte-identical");
@@ -241,7 +257,7 @@ async def comfy_entrypoint(): return Extension()
     assert.equal(readFileSync(uv, "utf8"), "fixture uv", "kept installer stays");
   };
   if (defer) return { root, environment, verifyUntouched };
-  const result = run(stageArgs, environment);
+  const result = run(nvidia ? ["--backend", "nvidia", "--gpu-name", "NVIDIA GeForce RTX 4070", "--qwen-compatible", "--stage-only"] : stageArgs, environment);
   verifyUntouched();
   return { result, root, calls: readFileSync(calls, "utf8").trim().split("\n").map(line => JSON.parse(line)) };
 }
@@ -275,6 +291,33 @@ test("a staged success reports complete launch metadata, verifies real node impo
   const checked = calls.findIndex(call => call.args.some(arg => arg.includes("from comfy_extras.nodes_qwen import comfy_entrypoint")));
   assert.ok(quick >= 0 && checked > quick, "native nodes are imported after the normal quick test");
   assert.ok(calls[checked].args.some(arg => arg.includes("node.define_schema().node_id")), "the probe builds actual schemas");
+});
+
+test("NVIDIA staging constrains Comfy requirements and records the verified CUDA profile", { skip: !python }, () => {
+  const { result, root, calls } = fixture("nvidia-runtime", { nvidia: true });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const constraint = path.join(root, "torch-constraints.txt");
+  assert.equal(readFileSync(constraint, "utf8"), "torch==2.14.1+cu130\ntorchvision==0.29.1+cu130\ntorchaudio==2.11.0+cu130\n");
+  const requirements = calls.find(call => call.args.includes("-r"));
+  assert.equal(requirements.args[requirements.args.indexOf("-c") + 1], constraint);
+  const install = calls.find(call => call.args.includes("torch==2.14.1+cu130"));
+  assert.ok(install.args.includes("--index-url"));
+  assert.ok(!install.args.includes("--extra-index-url"));
+  const done = record(result.stdout, "done");
+  assert.deepEqual(done.engineInstall.runtime, { python: "3.13.9", cuda: "13.0", capability: "8.9", driver: "591.74", profile: "cu130", smoke: true });
+});
+
+test("a CUDA kernel failure cannot activate a staged engine or blame a current driver", { skip: !python }, () => {
+  const { result, root } = fixture("nvidia-runtime-failure", { nvidia: true, runtimeError: "RuntimeError: no kernel image is available for execution on the device" });
+  assert.equal(result.status, 1);
+  const failure = record(result.stdout, "error");
+  assert.equal(failure.step, "verify");
+  assert.match(failure.message, /no kernel image is available/);
+  assert.match(failure.message, /Python:.*python/);
+  assert.doesNotMatch(failure.message, /Update the driver|580-series minimum/);
+  assert.equal(record(result.stdout, "done"), null);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(`${root}-cache`), true);
 });
 
 for (const failure of ["missing", "broken"]) {

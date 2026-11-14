@@ -555,17 +555,14 @@ test("RunPod GPU mode renders music on the Pod too", () => {
   assert.equal(disabled({ noPath: true }), true, "no launch mode enables an absent render path");
 });
 
-/* RUNPOD IS ADVANCED ONLY (the owner's decision, 2026-09-26). It ships in the
- * public build, but nothing about it shows in Simple: no launch mode, no star,
- * no RunPod box and no Remote numbers. Advanced keeps the whole mode. A
- * friend's card stays the first advice for a weak card. */
-test("the launcher offers RunPod GPU only when Studio opens on Advanced", async () => {
+/* RunPod is a way into Studio, including on a new PC with no local engine. */
+test("the launcher offers RunPod GPU at either saved detail level", async () => {
   const { modesForLevel, modeAllowed, launcherLevel, ADVANCED_MODES, advancedOnlyLine, cardAdvice } = await import("../../launcher/checks.mjs");
-  assert.deepEqual([...ADVANCED_MODES], ["runpod"]);
+  assert.deepEqual([...ADVANCED_MODES], []);
   const modes = { full: { available: true }, music: { available: true }, cloud: { available: true }, runpod: { available: true } };
-  assert.deepEqual(Object.keys(modesForLevel(modes, "simple")), ["full", "music", "cloud"], "Simple: no RunPod card");
+  assert.deepEqual(Object.keys(modesForLevel(modes, "simple")), ["full", "music", "cloud", "runpod"], "a fresh Simple install offers all launch modes");
   assert.deepEqual(Object.keys(modesForLevel(modes, "advanced")), ["full", "music", "cloud", "runpod"], "Advanced keeps it");
-  assert.equal(modeAllowed("runpod", "simple"), false);
+  assert.equal(modeAllowed("runpod", "simple"), true);
   assert.equal(modeAllowed("cloud", "simple"), true);
   assert.match(advancedOnlyLine("RunPod GPU"), /^RunPod GPU is in Advanced only\. Turn on "Show every setting" in Studio's Settings/);
   /* The level is Studio's own answer from the same file (server/welcome/startlevel.js). */
@@ -590,19 +587,21 @@ test("the launcher offers RunPod GPU only when Studio opens on Advanced", async 
   assert.doesNotMatch(friend, /runpod/i);
 });
 
-test("the launcher's server and page: hidden, not started and not saved as a favourite on Simple", () => {
+test("RunPod can be launched and saved as a favourite before changing detail level", () => {
   const mjs = read("launcher", "launcher.mjs");
   assert.match(mjs, /if \(url\.pathname === "\/api\/check"\) return send\(res, 200, await checkForPage\(await getCheck\(/, "the page gets the modes of this level");
   assert.match(mjs, /return \{ \.\.\.c, level, modes: modesForLevel\(c\.modes, level\) \};/);
-  assert.match(mjs, /if \(!modeAllowed\(mode, await studioLevel\(\)\)\) throw new Error\(advancedOnlyLine\(MODE_NAME\[mode\] \|\| mode\)\);/, "a launch is refused");
+  assert.match(mjs, /if \(!modeAllowed\(mode, await studioLevel\(\)\)\) throw new Error\(advancedOnlyLine\(MODE_NAME\[mode\] \|\| mode\)\);/, "manual launch uses the shared availability rule");
   assert.match(mjs, /if \(!modeAllowed\(b\.autoLaunch, await studioLevel\(\)\)\) return send\(res, 400, \{ error: advancedOnlyLine\(MODE_NAME\[b\.autoLaunch\]\) \}\);/, "a star is refused");
-  assert.match(mjs, /autoLaunch: fav && modeAllowed\(fav, level\) \? fav : null,/, "a saved RunPod star is not started on Simple");
+  assert.match(mjs, /autoLaunch: fav && modeAllowed\(fav, level\) \? fav : null,/, "a saved RunPod star uses the same rule");
   assert.match(mjs, /const mode = launcherPrefs\(\(await readJson\(SETTINGS\)\) \|\| \{\}, await studioLevel\(\)\)\.autoLaunch;/);
   /* The check itself is cached; the level is read at every ask. */
   const studioLevel = mjs.slice(mjs.indexOf("async function studioLevel() {"), mjs.indexOf("async function checkForPage("));
   assert.match(studioLevel, /catch \(err\) \{ if \(err\?\.code !== "ENOENT"\) return "advanced"; \}\s*return launcherLevel\(text\);/);
   const html = read("launcher", "index.html");
-  assert.match(html, /<article class="card mode" id="mode-runpod" data-mode="runpod" data-level="advanced" tabindex="0" role="listitem" hidden>/, "hidden until the check offers it");
+  const card = html.match(/<article\b[^>]*id="mode-runpod"[^>]*>/)?.[0] || "";
+  assert.ok(card, "the RunPod card is present");
+  assert.doesNotMatch(card, /\bhidden\b|data-level="advanced"/, "visible without a trip through Studio Settings");
   assert.match(html, /if \(card\.dataset\.level === "advanced"\) card\.hidden = !\(check\?\.modes\?\.\[m\] \|\| mine\);/, "shown at Advanced, or while it runs");
   assert.match(html, /@media \(min-width: 1081px\) \{ \.modes:has\(> \.mode\[hidden\]\) \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \} \}/);
 });

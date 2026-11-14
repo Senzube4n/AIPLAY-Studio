@@ -268,6 +268,8 @@ node server/comfyargs_test.js || exit 1
 node --test server/vramreserve_test.js || exit 1
 node --test server/comfyargs-defaults_test.js || exit 1
 node server/install-engine_test.js || exit 1
+node --test server/setup/torch-runtime_test.js || exit 1
+node --test server/setup/engine-diagnosis_test.js || exit 1
 node --check server/setup/qwen-engine.js || exit 1
 node --check server/setup/qwen-activation.js || exit 1
 node --check web/setup-feature.js || exit 1
