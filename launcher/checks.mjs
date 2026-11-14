@@ -157,18 +157,12 @@ export function cardAdvice({ gpu = null, torchOnCard = false, fullAvailable = tr
 }
 
 /**
- * THE LAUNCH MODES THAT ARE ADVANCED ONLY. The owner's decision of 2026-09-26:
- * RunPod GPU ships in the public build, but in Advanced only. On Simple the
- * launcher offers no RunPod card, no favourite star for it and no launch of
- * it, and a saved RunPod favourite is not started; Studio's Simple screens
- * show no RunPod box and no Remote numbers (web/styles.css, and
- * server/welcome/level.js advancedOnly). A friend's card stays the first
- * advice for a weak card (cardAdvice above: a friend, then Comfy API, and no
- * Pod). The level is Studio's own (server/welcome/startlevel.js, read from the
- * same settings.json), so "Show every setting" in Studio's Settings is the way
- * to the RunPod card; Advanced keeps the whole RunPod mode as main has it.
+ * Launch modes are independent of the detail level chosen inside Studio.
+ * RunPod must be discoverable on a fresh install, before Studio can open.
+ * Its rendering screens still show the controls the remote engine requires;
+ * choosing a launch mode does not change the person's saved detail level.
  */
-export const ADVANCED_MODES = Object.freeze(["runpod"]);
+export const ADVANCED_MODES = Object.freeze([]);
 /** Whether a launch mode is offered at this level ("simple" | "advanced"). */
 export const modeAllowed = (mode, level) => level === "advanced" || !ADVANCED_MODES.includes(mode);
 /** The system check's modes, without the ones this level is not offered. */

@@ -55,7 +55,7 @@ Copy both values somewhere private. You can safely run the bootstrap command aga
 
 ## 3. Connect AIPLAY on Windows
 
-1. Start AIPLAY with **AIPLAY RunPod.cmd**, or open the launcher and choose **Launch RunPod GPU**.
+1. Open the launcher and choose **Launch RunPod GPU**, or start **AIPLAY RunPod.cmd** from a source checkout. All launch modes are visible without changing **Show every setting**.
 2. Open **Images** or **Video**.
 3. In the RunPod box, click **Connection…**.
 4. Paste the **Worker URL** and **Worker token** printed by the bootstrap script.

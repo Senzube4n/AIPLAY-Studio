@@ -43,6 +43,7 @@ const SCRIPTS = [
   "verify-install.mjs",     // offline runtime payload validation
   "install-manifest.mjs",   // pure platform selection shared with updates/setup
   "install-engine.mjs",     // the launcher's "Install ComfyUI"
+  "diagnose-engine.mjs",    // read-only exact-interpreter GPU report
   "build-launcher-exe.mjs", // rebuild AIPLAY Studio.exe + launcher/aiplay.ico from source
   "dav_encode.py",          // audio reference: the encode ComfyUI refuses to do
   "_audio_io.py",           // the only correct audio loader; dav_encode needs it

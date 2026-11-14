@@ -134,7 +134,7 @@
      button of its own: pressing it selects it and opens the panel under the row;
      pressing it again closes the panel. Its Launch button starts it too. */
   .modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-  /* Three cards on Simple, where RunPod GPU (Advanced only) is not shown. */
+  /* Keep the row balanced if a future mode is unavailable. */
   @media (min-width: 1081px) { .modes:has(> .mode[hidden]) { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 1080px) { .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 560px) { .modes { grid-template-columns: 1fr; } }
@@ -534,10 +534,8 @@
     <!-- RunPod GPU: Images and Video on the person's own RunPod Pod through the
          AIPLAY worker (server/engine/remote-*.js, docs/RUNPOD_SETUP.md). Needs no
          ComfyUI here. Paid by the hour on RunPod, so the card says so first.
-         ADVANCED ONLY (the owner, 2026-09-26): hidden until the system check
-         offers it, which it does only when Studio's level is Advanced
-         (launcher/checks.mjs modesForLevel), or while it is the mode running. -->
-    <article class="card mode" id="mode-runpod" data-mode="runpod" data-level="advanced" tabindex="0" role="listitem" hidden>
+         Available before a local engine is installed, at either detail level. -->
+    <article class="card mode" id="mode-runpod" data-mode="runpod" tabindex="0" role="listitem">
       <button class="lanphone" type="button" data-lan="runpod" aria-pressed="false" aria-label="Use from a phone or another device on your network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></button>
       <button class="favstar" type="button" data-fav="runpod" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">

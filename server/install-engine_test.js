@@ -61,7 +61,10 @@ if (process.platform === "win32") {
   ok("an unlisted AMD card keeps device-all", plan("amd", "AMD Radeon RX 6700 XT").cmd.includes("device-all"));
 }
 const nv = plan("nvidia", "NVIDIA GeForce RTX 4090");
-ok("NVIDIA takes the stable line, not --pre nightly", nv.cmd.includes("cu999") && !nv.cmd.includes("--pre"), nv.cmd);
+ok("NVIDIA uses Studio's pinned profile, not the README's moving index",
+  nv.cmd.includes("torch==2.14.1+cu130") && nv.cmd.includes("torchvision==0.29.1+cu130")
+    && nv.cmd.includes("torchaudio==2.11.0+cu130") && nv.args.includes("--index-url")
+    && !nv.cmd.includes("cu999") && !nv.cmd.includes("--extra-index-url") && !nv.cmd.includes("--pre"), nv.cmd);
 const old = plan("nvidia", "NVIDIA GeForce GTX 1080 Ti");
 ok("a GTX 10-series card gets the CUDA 12.6 build on Python 3.12", old.cmd.includes("cu126") && old.python === "3.12", old.cmd);
 ok("Intel reads the XPU line", plan("intel", "Intel(R) Arc(TM) A770").cmd.includes("/whl/xpu"));

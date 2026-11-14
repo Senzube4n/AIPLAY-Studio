@@ -22,6 +22,79 @@ telemetry_spec.loader.exec_module(telemetry)
 
 
 class StartupTests(unittest.TestCase):
+    def test_comfy_requirements_preserve_inherited_torch_family_and_cuda_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python, comfy = root / 'venv/bin/python', root / 'ComfyUI'
+            python.parent.mkdir(parents=True)
+            versions = {'torch': '2.14.1+cu130', 'torchvision': '0.29.1+cu130',
+                        'torchaudio': '2.11.0+cu130'}
+            calls = []
+            def run(args):
+                constraints = Path(args[args.index('-c') + 1])
+                self.assertEqual(constraints.parent, root / 'venv')
+                self.assertEqual(constraints.read_text(), 'torch==2.14.1+cu130\n'
+                                 'torchvision==0.29.1+cu130\ntorchaudio==2.11.0+cu130\n')
+                self.assertEqual(args[:6], [str(python), '-m', 'pip', 'install', '-r',
+                                           str(comfy / 'requirements.txt')])
+                calls.append(args)
+            with patch.object(installer.subprocess, 'check_output', return_value=json.dumps(versions)) as query:
+                constraints = installer.install_comfy_requirements(python, comfy, run)
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(constraints.is_file())
+            self.assertEqual(query.call_count, 2)
+            for call in query.call_args_list:
+                self.assertEqual(call.args[0][:3], [str(python), '-s', '-c'])
+                self.assertNotIn('import torch', call.args[0][3])
+                self.assertEqual(call.kwargs['timeout'], 60)
+
+    def test_optional_torch_packages_can_be_added_without_inventing_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python = root / 'venv/bin/python'
+            python.parent.mkdir(parents=True)
+            before = {'torch': '2.14.1+cu130'}
+            after = {**before, 'torchvision': '0.29.1+cu130', 'torchaudio': '2.11.0+cu130'}
+            calls = []
+            with patch.object(installer.subprocess, 'check_output', side_effect=[json.dumps(before), json.dumps(after)]):
+                constraints = installer.install_comfy_requirements(python, root / 'ComfyUI', calls.append)
+            self.assertEqual(constraints.read_text(), 'torch==2.14.1+cu130\n')
+            self.assertEqual(len(calls), 1)
+
+    def test_missing_or_unreadable_inherited_runtime_stops_before_pip(self):
+        for versions in [{}, {'torchaudio': '2.11.0'}, [], {'torch': '2.14.1\nother==1'},
+                         {'torch': 2.14}, {'torch': '2.14.1', 'other': '1'}]:
+            with self.subTest(versions=versions), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                with patch.object(installer.subprocess, 'check_output', return_value=json.dumps(versions)):
+                    with self.assertRaisesRegex(RuntimeError, 'PyTorch'):
+                        installer.install_comfy_requirements(Path(directory) / 'bin/python', Path(directory), calls.append)
+                self.assertEqual(calls, [])
+        with patch.object(installer.subprocess, 'check_output', side_effect=subprocess.TimeoutExpired('python', 60)):
+            with self.assertRaisesRegex(RuntimeError, 'check the selected PyTorch/ComfyUI image'):
+                installer.installed_torch_versions(Path('unused-python'))
+
+    def test_changed_torch_stack_or_resolver_failure_never_passes_runtime_check(self):
+        for package, version in [('torch', '2.15.0+cu132'), ('torchvision', '0.30.0+cu132'),
+                                 ('torchaudio', '2.11.0+cpu')]:
+            with self.subTest(package=package), tempfile.TemporaryDirectory() as directory:
+                python = Path(directory) / 'venv/bin/python'
+                python.parent.mkdir(parents=True)
+                before = {'torch': '2.14.1+cu130', 'torchvision': '0.29.1+cu130', 'torchaudio': '2.11.0+cu130'}
+                with patch.object(installer.subprocess, 'check_output',
+                                  side_effect=[json.dumps(before), json.dumps({**before, package: version})]):
+                    with self.assertRaisesRegex(RuntimeError, 'AI service was not started'):
+                        installer.install_comfy_requirements(python, Path(directory), lambda _args: None)
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / 'venv/bin/python'
+            python.parent.mkdir(parents=True)
+            with patch.object(installer.subprocess, 'check_output', return_value='{"torch":"2.14.1+cu130"}') as query:
+                def conflict(args):
+                    raise subprocess.CalledProcessError(1, args)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    installer.install_comfy_requirements(python, Path(directory), conflict)
+            self.assertEqual(query.call_count, 1)
+
     def acceptance_fixture(self, directory):
         f = types.SimpleNamespace(at=100000, mono=0, status='RUNNING', calls=[], ready=True, preserved=0, cancelled=0,
                                   lost=False, storage_failure=False, rejection=None)

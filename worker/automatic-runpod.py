@@ -251,6 +251,57 @@ def install_studio_nodes(source, comfy, node, run):
          str(source / "server" / "comfy_nodes.js"), str(comfy / "custom_nodes")])
 
 
+def installed_torch_versions(python):
+    """Read this venv's inherited runtime without importing or initializing CUDA."""
+    program = """import importlib.metadata as metadata, json
+versions = {}
+for package in ('torch', 'torchvision', 'torchaudio'):
+    try:
+        versions[package] = metadata.version(package)
+    except metadata.PackageNotFoundError:
+        pass
+print(json.dumps(versions))
+"""
+    try:
+        versions = json.loads(subprocess.check_output(
+            [str(python), "-s", "-c", program], text=True, timeout=60))
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        raise RuntimeError("Could not read this RunPod image's PyTorch runtime; "
+                           "check the selected PyTorch/ComfyUI image before retrying") from exc
+    if not isinstance(versions, dict) or not versions.get('torch'):
+        raise RuntimeError("This RunPod image has no installed PyTorch runtime. "
+                           "Select a PyTorch/ComfyUI image with CUDA-enabled PyTorch; "
+                           "Studio will not silently choose a different CUDA build.")
+    for package, version in versions.items():
+        if package not in ('torch', 'torchvision', 'torchaudio') or not isinstance(version, str) \
+                or not re.fullmatch(r'[0-9][A-Za-z0-9.!+_-]*', version):
+            raise RuntimeError("The RunPod image reported an invalid PyTorch package version")
+    return versions
+
+
+def install_comfy_requirements(python, comfy, run):
+    """Keep the container's torch/CUDA stack while adding ComfyUI dependencies.
+
+    This private venv inherits system-site-packages intentionally. An unpinned
+    requirements install must not overlay those packages with a newer PyPI CUDA
+    build. Optional torch-family packages absent from the image remain free to
+    resolve against its torch pin. Bundled Studio nodes only copy Python files;
+    they do not run pip or install dependency hooks.
+    """
+    versions = installed_torch_versions(python)
+    constraints = python.parent.parent / 'aiplay-torch-constraints.txt'
+    constraints.write_text(''.join(f'{package}=={versions[package]}\n'
+                                  for package in ('torch', 'torchvision', 'torchaudio')
+                                  if package in versions), encoding='utf-8')
+    run([str(python), "-m", "pip", "install", "-r", str(comfy / "requirements.txt"),
+         "-c", str(constraints)])
+    installed = installed_torch_versions(python)
+    if any(installed.get(package) != version for package, version in versions.items()):
+        raise RuntimeError("ComfyUI requirements changed the RunPod image's pinned PyTorch runtime. "
+                           "The AI service was not started; review the image and requirements before retrying.")
+    return constraints
+
+
 def main():
     repo, commit, token = checked_environment(os.environ)
     policy = acceptance_policy(os.environ)
@@ -414,7 +465,7 @@ await storage.persist(Object.values(jobs));"""
             if not (venv / "bin" / "python").exists():
                 run(["python", "-m", "venv", "--system-site-packages", str(venv)])
             python = venv / "bin" / "python"
-            run([str(python), "-m", "pip", "install", "-r", str(comfy / "requirements.txt")])
+            install_comfy_requirements(python, comfy, run)
             install_studio_nodes(source, comfy, node, run)
             models = BASE / "models"
             models.mkdir(exist_ok=True)

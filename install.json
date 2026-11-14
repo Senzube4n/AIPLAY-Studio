@@ -35,7 +35,9 @@
     "shared/model-profiles.js",
     "shared/model-bundles.js",
     "scripts/verify-install.mjs",
-    "scripts/install-manifest.mjs"
+    "scripts/install-manifest.mjs",
+    "scripts/diagnose-engine.mjs",
+    "server/setup/torch-runtime.js"
   ],
   "platforms": {
     "linux": {
