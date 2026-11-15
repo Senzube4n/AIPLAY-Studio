@@ -222,6 +222,33 @@
   .modal h3 { margin: 0; font: 600 16px var(--disp); }
   .modal p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
   .modal .actions { justify-content: flex-end; }
+  /* An installation choice stays inside the launcher, including its path fallback. */
+  #comfyModal { width: min(660px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 0;
+    border: 1px solid var(--edge); border-radius: 16px; background: var(--panel); color: var(--ink); }
+  #comfyModal::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(3px); }
+  #comfyModal .card { border: 0; border-radius: 0; }
+  #comfyModal h3 { margin: 0; font: 600 18px var(--disp); }
+  #comfyModal p { margin: 0; color: var(--faint); font-size: 13px; line-height: 1.5; }
+  #comfyModal .actions { justify-content: flex-end; }
+  #comfyModal .actions .scan { margin-right: auto; }
+  #comfyList { display: grid; gap: 8px; max-height: 40dvh; overflow-y: auto; padding: 2px; }
+  #comfyModal .comfy-choice { display: flex; align-items: flex-start; gap: 10px; padding: 12px;
+    border: 1px solid var(--hair); border-radius: 10px; background: var(--raise); cursor: pointer; }
+  #comfyModal .comfy-choice:has(input:checked) { border-color: var(--primary); }
+  #comfyModal .comfy-choice:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 1px; }
+  #comfyModal .comfy-choice input { accent-color: var(--primary); margin-top: 3px; }
+  #comfyModal .comfy-choice.invalid { cursor: default; }
+  #comfyModal .comfy-choice > span { display: grid; gap: 4px; min-width: 0; }
+  #comfyModal .comfy-choice b { font: 600 14px var(--disp); }
+  #comfyModal code { color: var(--dim); font: 11px var(--mono); overflow-wrap: anywhere; }
+  #comfyModal .comfy-status { color: var(--ok); font-size: 12px; }
+  #comfyModal .comfy-status.pending { color: var(--faint); }
+  #comfyModal .comfy-status.bad, #comfyMessage.bad { color: var(--err); }
+  #comfyModal .comfy-manual { display: grid; gap: 6px; font-size: 13px; color: var(--dim); }
+  #comfyPath { min-width: 0; width: 100%; border: 1px solid var(--hair); border-radius: 8px; padding: 9px 10px;
+    background: var(--raise); color: var(--ink); font: 12px var(--mono); }
+  #comfyPath:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+  @media (max-width: 480px) { #comfyModal .actions .scan { margin-right: 0; } }
   .runbadge i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
   .mode.active.starting .runbadge { color: var(--primary); }
   .mode.active.starting .runbadge i { background: var(--primary); box-shadow: none; animation: pulse 1.1s infinite; }
@@ -640,6 +667,23 @@
   </article>
 </div>
 
+<dialog id="comfyModal" aria-labelledby="comfyTitle" aria-describedby="comfyHint">
+  <form class="card" id="comfyForm">
+    <h3 id="comfyTitle">Choose ComfyUI</h3>
+    <p id="comfyHint">Choose the installation you normally use.</p>
+    <div id="comfyList" role="group" aria-label="Detected installations" aria-busy="false"></div>
+    <label class="comfy-manual" for="comfyPath">Another folder
+      <input id="comfyPath" type="text" placeholder="Paste a ComfyUI folder path" autocomplete="off" spellcheck="false">
+    </label>
+    <p id="comfyMessage" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button class="btn ghost scan" type="button" id="comfyRescan">Scan again</button>
+      <button class="btn ghost" type="button" id="comfyCancel">Cancel</button>
+      <button class="btn" type="submit" id="comfyUse" disabled>Use installation</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -700,6 +744,7 @@ function paintCheck() {
   paintButtons();
   paintSetup();
   if (sel) paintPanel();
+  maybeChooseComfy();
 }
 async function loadCheck(refresh) {
   $("btnRecheck").disabled = true;
@@ -708,6 +753,136 @@ async function loadCheck(refresh) {
   catch { $("checkRows").innerHTML = `<div class="skeleton">The system check failed. Is the launcher console still open?</div>`; }
   finally { $("btnRecheck").disabled = false; }
 }
+
+/* ── choose a detected ComfyUI install ──────────────────────────────────
+ * The OS folder picker can wait off-screen. Known installs and a pasted path
+ * both go through one validated save, inside this window. */
+let comfyInstalls = [];
+let comfySelected = "";
+let comfyScanning = false;
+let comfySaving = false;
+let comfyScanSequence = 0;
+let comfyReturnFocus = null;
+const comfyPrompted = new Set();
+function comfyNotice(message = "", bad = false) {
+  $("comfyMessage").textContent = message;
+  $("comfyMessage").classList.toggle("bad", bad);
+}
+function comfyButtons() {
+  const path = $("comfyPath").value.trim() || comfySelected;
+  $("comfyUse").disabled = comfySaving || !path;
+  $("comfyUse").textContent = comfySaving ? "Checking Python…" : "Use installation";
+  $("comfyRescan").disabled = comfyScanning || comfySaving;
+  $("comfyRescan").textContent = comfyScanning ? "Scanning…" : "Scan again";
+  $("comfyCancel").disabled = comfySaving;
+  $("comfyPath").disabled = comfySaving;
+  $("comfyList").setAttribute("aria-busy", String(comfyScanning));
+  for (const radio of $("comfyList").querySelectorAll('input[name="comfyRig"]')) {
+    radio.disabled = comfySaving || radio.dataset.valid === "false";
+  }
+}
+function paintComfyInstalls() {
+  $("comfyList").innerHTML = comfyInstalls.length ? comfyInstalls.map((i) => `
+    <label class="comfy-choice${i.valid === false ? " invalid" : ""}">
+      <input type="radio" name="comfyRig" value="${esc(i.rig)}" data-valid="${i.valid === false ? "false" : "true"}"${
+        i.valid !== false && i.rig === comfySelected ? " checked" : ""}${i.valid === false ? " disabled" : ""}>
+      <span><b>${esc(i.name || "ComfyUI")}</b><code>${esc(i.rig)}</code>
+        <span class="comfy-status${i.valid === false ? " bad" : i.valid === true ? "" : " pending"}">${esc(i.valid === true ? "Python ready" : i.valid === false ? (i.error || "Python unavailable") : "Python found")}</span>
+        ${i.python ? `<code>${esc(i.python)}</code>` : ""}</span>
+    </label>`).join("") : '<p>No installations found. Paste a folder path below.</p>';
+  comfyButtons();
+}
+async function scanComfyInstalls() {
+  if (comfyScanning || comfySaving) return;
+  const sequence = ++comfyScanSequence;
+  comfyScanning = true;
+  comfyNotice("Looking for ComfyUI installations…");
+  comfyButtons();
+  try {
+    const result = await api("/api/comfy-installs");
+    if (sequence !== comfyScanSequence || !$("comfyModal").open) return;
+    if (result.error) throw new Error(result.error);
+    comfyInstalls = Array.isArray(result.installs) ? result.installs : [];
+    if (!comfyInstalls.some((i) => i.valid !== false && i.rig === comfySelected)) {
+      comfySelected = comfyInstalls.some((i) => i.valid !== false && i.rig === result.selectedRig) ? result.selectedRig : "";
+    }
+    paintComfyInstalls();
+    comfyNotice(comfyInstalls.some((i) => i.valid !== false) ? "Python is checked when you use an installation." : "Choose another folder to check its Python environment.");
+  } catch (error) {
+    if (sequence !== comfyScanSequence || !$("comfyModal").open) return;
+    comfyNotice(error.message || "Could not scan installations. Try again or paste a path.", true);
+  } finally {
+    if (sequence === comfyScanSequence) { comfyScanning = false; comfyButtons(); }
+  }
+}
+function openComfyChooser() {
+  if ($("comfyModal").open) return;
+  closeMenus();
+  comfyReturnFocus = document.activeElement;
+  comfySelected = "";
+  comfyInstalls = [];
+  $("comfyPath").value = "";
+  $("comfyList").innerHTML = '<p>Looking for ComfyUI…</p>';
+  $("comfyModal").showModal();
+  $("comfyCancel").focus();
+  scanComfyInstalls();
+}
+function closeComfyChooser() {
+  if (comfySaving) return;
+  ++comfyScanSequence;
+  comfyScanning = false;
+  $("comfyModal").close();
+  if (comfyReturnFocus?.isConnected && !comfyReturnFocus.closest('[hidden]')) comfyReturnFocus.focus();
+  else $("btnSystem").focus();
+}
+function maybeChooseComfy() {
+  if (!check?.hits?.length || check.modes?.full?.available || comfySaving || $("comfyModal").open) return;
+  if (["starting", "ready", "stopping", "external"].includes(studio.state) || install.state === "running") return;
+  const key = [...check.hits].sort().join("\n");
+  if (comfyPrompted.has(key)) return;
+  comfyPrompted.add(key);
+  openComfyChooser();
+}
+async function saveComfyInstall(event) {
+  event?.preventDefault();
+  if (comfySaving) return;
+  const rig = $("comfyPath").value.trim() || comfySelected;
+  if (!rig) return;
+  /* A slow, read-only scan must not hold a pasted path hostage. Its late
+     response cannot replace the choice being checked or the next dialog. */
+  ++comfyScanSequence;
+  comfyScanning = false;
+  comfySaving = true;
+  comfyNotice("Checking Python and saving…");
+  comfyButtons();
+  try {
+    const result = await api("/api/comfy-install", { rig });
+    if (result.error || !result.ok) throw new Error(result.error || "Could not save this installation.");
+    comfySaving = false;
+    closeComfyChooser();
+    await loadCheck(false);
+  } catch (error) {
+    comfyNotice(error.message || "Could not save this installation. Try again.", true);
+  } finally { comfySaving = false; comfyButtons(); }
+}
+$("comfyForm").addEventListener("submit", saveComfyInstall);
+$("comfyRescan").addEventListener("click", scanComfyInstalls);
+$("comfyCancel").addEventListener("click", closeComfyChooser);
+$("comfyModal").addEventListener("cancel", (event) => { event.preventDefault(); closeComfyChooser(); });
+$("comfyList").addEventListener("change", (event) => {
+  const radio = event.target.closest('input[name="comfyRig"]');
+  if (!radio || radio.disabled) return;
+  comfySelected = radio.value;
+  $("comfyPath").value = "";
+  comfyNotice();
+  comfyButtons();
+});
+$("comfyPath").addEventListener("input", () => {
+  comfySelected = "";
+  for (const radio of $("comfyList").querySelectorAll('input[name="comfyRig"]')) radio.checked = false;
+  comfyNotice();
+  comfyButtons();
+});
 
 /* ── engine setup ─────────────────────────────────────────────────────── */
 let install = { state: "idle" };
@@ -1016,6 +1191,7 @@ document.addEventListener("click", async (e) => {
   /* The native folder dialog opens on the desktop, in front of this window. */
   const p = e.target.closest("[data-pick]");
   if (p) {
+    if (p.dataset.pick === "comfy") { openComfyChooser(); return; }
     p.disabled = true;
     p.textContent = "Choosing…";
     try {

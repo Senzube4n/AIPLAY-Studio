@@ -442,9 +442,12 @@ you will read is comments explaining each one. Here is what that is.
    on every drive from C: to F: for `ComfyUI`, `AI`, `AI\ComfyUI`,
    `ComfyUI_windows_portable` and `StabilityMatrix` — and one level inside each
    of those, so `D:\AI\anything\ComfyUI` is found too. Anything containing
-   `ComfyUI\main.py` counts. If it finds one, it uses it. If it finds several, it
-   asks. If it finds none, it asks you to paste a path, and it accepts either the
-   `ComfyUI` folder itself or the folder above it.
+   `ComfyUI\main.py` is a candidate. Studio checks that its Python can start and
+   import PyTorch before saving it. If it finds one installation, it validates
+   and uses it. If it finds several, the launcher opens **Choose ComfyUI** with their
+   names, full paths and Python status. Select one and press **Use installation**.
+   **System → ComfyUI install → Change…** opens the same chooser; its path field
+   accepts either the `ComfyUI` folder itself or the folder above it.
 4. **Starts the app** and opens your browser at `http://127.0.0.1:4173`.
 
 Leave the black window open. Closing it stops Studio.
@@ -829,9 +832,15 @@ If it says *"Found ComfyUI at ..., but no python environment inside it"*, run
 ComfyUI once on its own first. That first launch is what creates the Python
 environment; before it, there is nothing to find.
 
-If it found nothing at all, paste the full path when it asks. Either the
-`ComfyUI` folder or the folder above it is accepted. If the window closed too
-fast to type into, write the path yourself into
+If several installations were found, select the one you normally use in
+**Choose ComfyUI**. Invalid installations show their Python error; selecting
+one does not replace your saved settings. In ComfyUI Desktop, the installation
+tile's **Show in Explorer** action reveals its path. You can also paste a path
+into the launcher's chooser and press **Use installation**, without opening a
+Windows folder dialog. Either the `ComfyUI` folder or the folder above it is
+accepted. If you use the terminal setup, choose a listed number or paste a path.
+
+As a manual fallback, update `rig` while preserving the other settings in
 `%USERPROFILE%\.aiplay-studio\settings.json`:
 
 ```
