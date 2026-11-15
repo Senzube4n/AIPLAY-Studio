@@ -15,6 +15,8 @@ on:
       - 'server/macos-*_test.js'
       - 'server/install-payload_test.js'
       - 'server/selfupdate*'
+      - 'server/updates.js'
+      - 'server/version_test.js'
       - 'launcher/**'
       - 'web/assets/aiplay-logo.png'
       - 'LICENSE'
@@ -33,6 +35,8 @@ on:
       - 'server/macos-*_test.js'
       - 'server/install-payload_test.js'
       - 'server/selfupdate*'
+      - 'server/updates.js'
+      - 'server/version_test.js'
       - 'launcher/**'
       - 'web/assets/aiplay-logo.png'
       - 'LICENSE'
@@ -53,7 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             arch: arm64
           - os: macos-15-intel
             arch: x64
@@ -81,7 +85,7 @@ jobs:
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --omit=dev --ignore-scripts
       - name: Test installer safety, payloads and updates
-        run: node --experimental-vm-modules --test server/macos-bootstrap_test.js server/macos-installer_test.js server/install-payload_test.js server/selfupdate_test.js server/setup/comfy-installs_test.js launcher/comfy-chooser_test.mjs launcher/comfy-chooser-integration_test.mjs
+        run: node --experimental-vm-modules --test server/macos-bootstrap_test.js server/macos-installer_test.js server/install-payload_test.js server/selfupdate_test.js server/version_test.js server/setup/comfy-installs_test.js launcher/comfy-chooser_test.mjs launcher/comfy-chooser-integration_test.mjs
       - name: Build pinned native app and disk image
         run: node scripts/build-macos-installer.mjs --arch=${{ matrix.arch }}
       - name: Verify, mount and copy the actual disk image

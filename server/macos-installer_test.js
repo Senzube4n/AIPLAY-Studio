@@ -36,7 +36,7 @@ async function fixture(t, arch = 'arm64') {
 
 test('Darwin runtime pins bind both official architectures, checksum listing, Node/npm and minimum OS', () => {
   assert.equal(validateMacRuntimePins(pins), pins); assert.equal(pins.nodeVersion, '24.22.1'); assert.equal(pins.npmVersion, '11.19.1');
-  assert.equal(pins.minimumMacOS, '13.5'); assert.equal(MINIMUM_MACOS, '13.5'); assert.equal(MACOS_SETUP_VERSION, '1.0.0');
+  assert.equal(pins.minimumMacOS, '13.5'); assert.equal(MINIMUM_MACOS, '13.5'); assert.equal(MACOS_SETUP_VERSION, '1.0.1');
   assert.deepEqual(macArchitecture('x64'), { node: 'x64', clang: 'x86_64', cpuType: 0x01000007 });
   assert.throws(() => macArchitecture('universal'), /supports/);
   for (const arch of ['arm64', 'x64']) verifyChecksumListing(`${pins.architectures[arch].sha256}  ${pins.architectures[arch].file}\n`, pins.architectures[arch]);
@@ -131,4 +131,82 @@ test('package provenance includes every direct builder dependency and native ent
   assert.doesNotMatch(entry, /\bsystem\s*\(|\/bin\/sh|killall|pkill|setenv\("AIPLAY_APPDATA"/);
   const plist = await readFile(path.join(ROOT, 'installer/macos/Info.plist'), 'utf8');
   assert.match(plist, /<key>CFBundleExecutable<\/key><string>AIPLAY Studio<\/string>/); assert.match(plist, /<key>LSMinimumSystemVersion<\/key><string>13\.5<\/string>/);
+});
+
+test('native browser retries stop after success, at four attempts, or when shutdown starts', {
+  skip: process.platform !== 'darwin' && 'requires AppKit to execute the real native entry method',
+}, async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-macos-reopen-fixture-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, 'reopen-fixture.m'), executable = path.join(dir, 'reopen-fixture');
+  // Compile the actual entry with deterministic browser/scheduler substitutes.
+  // No application, browser or bootstrap child is launched by this fixture.
+  await writeFile(source, `#import <AppKit/AppKit.h>
+#import <objc/runtime.h>
+#include <dispatch/dispatch.h>
+#include <stdio.h>
+#include <stdlib.h>
+static NSMutableArray *scheduled;
+static NSArray<NSNumber *> *answers;
+static NSInteger calls;
+static void fixtureSchedule(dispatch_time_t when, dispatch_queue_t queue, dispatch_block_t block) {
+    [scheduled addObject:[block copy]];
+}
+#define dispatch_after fixtureSchedule
+#define main fixture_app_main
+#include ${JSON.stringify(path.join(ROOT, 'installer/macos/entry.m'))}
+#undef main
+#undef dispatch_after
+@interface FixtureWorkspace : NSObject
+@end
+@implementation FixtureWorkspace
+- (BOOL)openURL:(NSURL *)url { NSInteger index = calls++; return index < answers.count && answers[index].boolValue; }
+@end
+static FixtureWorkspace *workspace;
+static id fixtureSharedWorkspace(id object, SEL selector) { return workspace; }
+@interface FixtureHost : AIPLAYHost
+@property(nonatomic, strong) NSMutableArray *events;
+@end
+@implementation FixtureHost
+- (void)event:(NSString *)name extra:(NSDictionary *)extra {
+    [self.events addObject:@{ @"event":name, @"extra":extra ?: @{} }];
+}
+@end
+static void check(BOOL condition, const char *message) {
+    if (!condition) { fprintf(stderr, "%s\\n", message); exit(1); }
+}
+static FixtureHost *freshHost(void) {
+    calls = 0; scheduled = [NSMutableArray array];
+    FixtureHost *host = [FixtureHost new]; host.events = [NSMutableArray array];
+    host.lastURL = [NSURL URLWithString:@"http://127.0.0.1:4170/"]; return host;
+}
+static void drain(void) {
+    while (scheduled.count) {
+        check(calls <= 4, "retry scheduling exceeded the limit");
+        dispatch_block_t block = scheduled.firstObject; [scheduled removeObjectAtIndex:0]; block();
+    }
+}
+int main(void) { @autoreleasepool {
+    workspace = [FixtureWorkspace new];
+    method_setImplementation(class_getClassMethod(NSWorkspace.class, @selector(sharedWorkspace)), (IMP)fixtureSharedWorkspace);
+    answers = @[@NO, @NO, @NO, @NO];
+    FixtureHost *host = freshHost(); host.stopping = YES; [host openLastURL:1];
+    check(calls == 0 && scheduled.count == 0 && host.events.count == 0, "shutdown must not open a browser");
+    host = freshHost(); [host openLastURL:1];
+    check(calls == 1 && scheduled.count == 1, "a refused hand-off must queue a retry");
+    host.stopping = YES; drain();
+    check(calls == 1 && host.events.count == 0, "a queued retry must stop when shutdown begins");
+    host = freshHost(); [host openLastURL:1]; drain();
+    NSDictionary *last = [host.events.lastObject objectForKey:@"extra"];
+    check(calls == 4 && host.events.count == 1 && [last[@"attempts"] integerValue] == 4 && ![last[@"opened"] boolValue], "a failed hand-off must stop and report four attempts");
+    answers = @[@NO, @NO, @YES]; host = freshHost(); [host openLastURL:1]; drain();
+    last = [host.events.lastObject objectForKey:@"extra"];
+    check(calls == 3 && host.events.count == 1 && [last[@"attempts"] integerValue] == 3 && [last[@"opened"] boolValue], "a successful hand-off must stop retrying");
+    puts("native reopen lifecycle passed");
+    return 0;
+} }
+`);
+  execFileSync('/usr/bin/clang', ['-fobjc-arc', '-fblocks', '-framework', 'Foundation', '-framework', 'AppKit', source, '-o', executable],
+    { encoding: 'utf8', timeout: 30_000 });
+  assert.match(execFileSync(executable, [], { encoding: 'utf8', timeout: 10_000 }), /native reopen lifecycle passed/);
 });

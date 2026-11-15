@@ -122,6 +122,26 @@ a caption, never a gate.
   disagree.
 - `GET /api/version` for anything else, including an agent.
 
+## Installer releases and app updates
+
+**Senzu's build is the original and the default.** Setup also offers Bucky's
+optional fork, which is used only when selected. The Windows release asset is
+the installer, not a frozen Studio build: Setup downloads the current `main`
+commit of the chosen repository. Its GitHub release date can therefore be
+older than the app build line. A Studio-only change does not require rebuilding
+or republishing Setup.exe.
+
+The current updater keeps the installation's selected repository:
+
+- An original install uses `Senzube4n/AIPLAY-Studio`'s `main`.
+- An install explicitly made from a fork uses that fork's `main`.
+- A Git checkout pulls its own tracking branch with `--ff-only`.
+
+A different fork being ahead does not change this selection. An unavailable
+repository or comparison does not authorize switching repositories. Install
+metadata and lineage identify the selected repository; when neither names a
+fork, the original is the default. Changing builds is an explicit setup choice.
+
 ## The update check
 
 `server/updates.js`, two public `GET`s to `api.github.com`, no account, no
@@ -136,6 +156,10 @@ A fork also asks its own repository, so somebody running an old copy of a fork
 is told. The answer is cached for an hour; GitHub allows 60 anonymous requests
 an hour per address. A refusal, a rate limit or no connection come back as one
 sentence and change nothing else.
+
+These comparisons report available changes; they do not choose a different
+repository for **Update**. `server/selfupdate.js` applies the selected-repository
+rules above and verifies the downloaded app before replacing an installed copy.
 
 The Studio app check requires a person's press. ComfyUI has a separate stable
 release check (`server/comfy-updates.js`), enabled at startup when a local

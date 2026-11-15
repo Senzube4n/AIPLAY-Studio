@@ -101,7 +101,7 @@ export function lastCheck() {
 export const UPDATE_HOW = "Stop Studio, then press Update at the bottom of the launcher window.";
 
 /**
- * One sentence for a screen. Written here rather than in three front ends, so
+ * Shared status text for a screen. Written here rather than in three front ends, so
  * the launcher, About and any agent say the same thing.
  */
 export function updateSentence(r, v = appVersion()) {
@@ -110,13 +110,15 @@ export function updateSentence(r, v = appVersion()) {
   const bits = [];
   const up = r.upstream;
   if (up?.ahead === 0) bits.push(v.fork ? "Up to date with the original." : "Up to date.");
-  /* Behind: the count, then what to DO about it, in the words the launcher
-   * uses. Both front ends show this sentence, and a count with no next step
-   * left a person re-downloading the zip. Update replaces the app files only;
-   * songs, settings, models and the engine stay where they are. One chain:
-   * the "not a commit GitHub knows" line is for ahead === null only. */
-  else if (up?.ahead > 0) bits.push(`${up.ahead} commit${up.ahead === 1 ? "" : "s"} on the original you do not have${up.newest ? `, newest: ${up.newest}` : ""}.`, UPDATE_HOW);
+  /* The original's count is information on a fork. Update follows the selected
+   * repository, so only its own newer head can offer that action. */
+  else if (up?.ahead > 0) {
+    bits.push(`${up.ahead} commit${up.ahead === 1 ? "" : "s"} on the original you do not have${up.newest ? `, newest: ${up.newest}` : ""}.`);
+    if (v.fork) bits.push("Update stays on your selected fork.");
+  }
   else if (up?.head) bits.push(`The original is at ${up.head}; this build's base is not a commit GitHub knows.`);
-  if (r.fork && !r.fork.current) bits.push(`Your own repository has ${r.fork.head}, which this build is not.`);
+  const ownNewer = r.fork && !r.fork.current;
+  if (ownNewer) bits.push(`Your own repository has ${r.fork.head}, which this build is not.`);
+  if ((!v.fork && up?.ahead > 0) || ownNewer) bits.push(UPDATE_HOW);
   return bits.join(" ") || "Nothing to report.";
 }

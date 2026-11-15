@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { appVersion, versionLine, stamp, lineage } from "./version.js";
 import { PACKET_V } from "./collab/packet.js";
-import { checkUpdates, updateSentence } from "./updates.js";
+import { checkUpdates, updateSentence, UPDATE_HOW } from "./updates.js";
 
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
@@ -123,7 +123,7 @@ test("the update check asks GitHub about the base this build contains, and never
     assert.match(updateSentence(r), /3 commits on the original you do not have/);
     /* Judged without the fork line: on a fork's checkout the fake GitHub answers
      * the fork's own head too, and "Your own repository has ..." follows. */
-    assert.match(updateSentence({ ...r, fork: null }), /3 commits on the original you do not have[^]*\. Stop Studio, then press Update at the bottom of the launcher window\.$/,
+    assert.match(updateSentence({ ...r, fork: null }, { fork: false }), /3 commits on the original you do not have[^]*\. Stop Studio, then press Update at the bottom of the launcher window\.$/,
       "behind, the sentence says what to press, where");
     // One if/else chain: only the behind case gets the launcher step, and the
     // "not a commit GitHub knows" line is for a base GitHub could not compare.
@@ -144,6 +144,35 @@ test("the update check asks GitHub about the base this build contains, and never
     assert.equal(bad.ok, false);
     assert.match(updateSentence(bad), /offline/);
   } finally { globalThis.fetch = real; }
+});
+
+test("an original ahead of an up-to-date fork reports the gap without offering a repository switch", () => {
+  const text = updateSentence({ ok: true,
+    upstream: { ahead: 4, head: "1234567", newest: "New ComfyUI chooser" },
+    fork: { head: "7654321", current: true },
+  }, { fork: true });
+  assert.equal(text, "4 commits on the original you do not have, newest: New ComfyUI chooser. Update stays on your selected fork.");
+  assert.ok(!text.includes(UPDATE_HOW), "Update cannot acquire original-only changes for an explicit fork install");
+  assert.ok(!text.includes("Your own repository"), "the selected fork is already current");
+});
+
+test("a newer selected fork offers its own Update action regardless of the original's count", () => {
+  for (const ahead of [0, 3, null]) {
+    const text = updateSentence({ ok: true,
+      upstream: { ahead, head: "1234567" },
+      fork: { head: "7654321", current: false },
+    }, { fork: true });
+    assert.ok(text.includes("Your own repository has 7654321, which this build is not."));
+    assert.ok(text.endsWith(UPDATE_HOW));
+    assert.equal(text.split(UPDATE_HOW).length - 1, 1, "a single action follows the selected fork's newer head");
+    if (ahead > 0) assert.ok(text.includes("Update stays on your selected fork."));
+  }
+});
+
+test("an unchecked fork head does not turn the original's gap into a fork Update action", () => {
+  const text = updateSentence({ ok: true, upstream: { ahead: 1, head: "1234567" }, fork: null }, { fork: true });
+  assert.equal(text, "1 commit on the original you do not have. Update stays on your selected fork.");
+  assert.ok(!text.includes(UPDATE_HOW));
 });
 
 test("both numbers reach the screens, and the check is a press", () => {

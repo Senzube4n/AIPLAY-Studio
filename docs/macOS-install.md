@@ -6,9 +6,9 @@ This is a **developer preview** for macOS 13.5 or newer. Choose the download
 that matches **Apple menu → About This Mac**:
 
 - **Apple silicon** (an Apple M-series chip):
-  [Download ARM64](https://github.com/Senzube4n/AIPLAY-Studio/releases/download/macos-setup-v1.0/AIPLAY-Studio-macOS-arm64.dmg).
+  [Download ARM64](https://github.com/Senzube4n/AIPLAY-Studio/releases/download/macos-setup-v1.0.1/AIPLAY-Studio-macOS-arm64.dmg).
 - **Intel**:
-  [Download x64](https://github.com/Senzube4n/AIPLAY-Studio/releases/download/macos-setup-v1.0/AIPLAY-Studio-macOS-x64.dmg).
+  [Download x64](https://github.com/Senzube4n/AIPLAY-Studio/releases/download/macos-setup-v1.0.1/AIPLAY-Studio-macOS-x64.dmg).
 
 1. Open the `.dmg` and drag **AIPLAY Studio** into **Applications**.
 2. Eject the disk image, then open the copied **AIPLAY Studio.app** in Finder.
@@ -29,7 +29,7 @@ prove that a quarantined internet download will pass Gatekeeper.
 
 The package supplies its own Node.js and npm for the Studio application,
 launcher and DAW. The native acceptance workflow covers Apple silicon on
-macOS 14/26 and Intel on macOS 15. The runtime's declared minimum is macOS 13.5;
+macOS 15/26 and Intel on macOS 15. The runtime's declared minimum is macOS 13.5;
 that minimum is not a separate full Studio acceptance result.
 
 Opening the running app again in Finder reopens its browser page through the

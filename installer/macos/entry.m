@@ -144,11 +144,24 @@ static void installTerminationSignals(void) {
     [self event:@"child-started" extra:nil];
     installTerminationSignals();
 }
+// A browser that is still starting can refuse the hand-off (seen on CI after the
+// first reopen), so try again a few times before reporting the reopen as failed.
+- (void)openLastURL:(NSInteger)attempt {
+    if (self.stopping) return;
+    BOOL opened = self.lastURL && [NSWorkspace.sharedWorkspace openURL:self.lastURL];
+    if (!opened && self.lastURL && attempt < 4 && !self.stopping) {
+        __weak AIPLAYHost *weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(attempt * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [weakSelf openLastURL:attempt + 1];
+        });
+        return;
+    }
+    [self event:@"reopen" extra:@{ @"opened":@(opened), @"attempts":@(attempt) }];
+}
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)flag {
     [self event:@"reopen-request" extra:nil];
-    BOOL opened = self.lastURL && [NSWorkspace.sharedWorkspace openURL:self.lastURL];
     if (!self.lastURL && self.task.running) self.wantsReopen = YES;
-    [self event:@"reopen" extra:@{ @"opened":@(opened) }];
+    [self openLastURL:1];
     return NO;
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)application {

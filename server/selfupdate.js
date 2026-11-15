@@ -17,12 +17,10 @@
  * where songs, settings and any engine live. Nothing here touches ComfyUI,
  * Python or a model.
  *
- * Which repository: whichever build is AHEAD. Senzu's and Bucky's builds are
- * both asked for their newest `main` (plus this install's own repository when
- * it is some other fork), GitHub compares them, and the one that contains the
- * others' commits wins. Level or diverged, Senzu's build, the main one, wins.
- * install-info.json (written by the installer), else package.json's lineage,
- * else the original, is still what updateSource() reports as the install's own.
+ * Which repository: the one selected during installation, recorded in
+ * install-info.json, then package.json's lineage. Without that metadata,
+ * Senzu's original repository is the default. Updates never switch repositories
+ * because another fork is ahead or the selected repository is unavailable.
  * A git clone is not redirected: it pulls its own tracking branch.
  * A ZIP's selected build must also contain its installed commit. Missing
  * comparison data or a diverged/older candidate never authorizes replacement.
@@ -42,8 +40,8 @@ import { selectInstallManifest } from "../scripts/install-manifest.mjs";
 
 const ROOT_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ORIGINAL = "Senzube4n/AIPLAY-Studio";
-/* The builds an update chooses between, in the order a tie goes. */
-export const BUILDS = [
+/* Display names only. The saved repository determines the update source. */
+const BUILDS = [
   { repo: ORIGINAL, label: "Senzu's build" },
   { repo: "bani4kaskashka/AIPLAY-Studio-Bucky-Fork", label: "Bucky's build" },
 ];
@@ -58,6 +56,25 @@ const run = (cmd, args, opts = {}) => new Promise((ok, fail) => {
   });
 });
 const readJson = async (f) => { try { return JSON.parse(await readFile(f, "utf8")); } catch { return null; } };
+async function sourceMetadata(file) {
+  let raw;
+  try { raw = await readFile(file, "utf8"); }
+  catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error(`The update source metadata ${path.basename(file)} could not be read. Nothing was changed.`);
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  } catch { /* Invalid source metadata must not redirect to another repository. */ }
+  throw new Error(`The update source metadata ${path.basename(file)} is invalid. Nothing was changed.`);
+}
+function selectedRepository(value) {
+  if (typeof value !== "string" || !REPO_RE.test(value)
+    || value.split("/").some(part => part === "." || part === ".."))
+    throw new Error("The selected update repository is invalid. Expected owner/repository. Nothing was changed.");
+  return value;
+}
 
 async function installManifest(root, platform) {
   let raw;
@@ -100,9 +117,15 @@ export async function updateSource(root = ROOT_DEFAULT) {
     const upstream = await run("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: root }).catch(() => "");
     return { kind: "git", upstream };
   }
-  const info = await readJson(path.join(root, "install-info.json"));
-  const pkg = await readJson(path.join(root, "package.json"));
-  const repo = info?.repo || pkg?.aiplay?.lineage?.repo || ORIGINAL;
+  const info = await sourceMetadata(path.join(root, "install-info.json"));
+  let choice = ORIGINAL;
+  if (info && Object.hasOwn(info, "repo")) choice = info.repo;
+  else {
+    const pkg = await sourceMetadata(path.join(root, "package.json"));
+    const lineage = pkg?.aiplay?.lineage;
+    if (lineage && Object.hasOwn(lineage, "repo")) choice = lineage.repo;
+  }
+  const repo = selectedRepository(choice);
   const gen = await readJson(path.join(root, "server", "version.gen.json"));
   const arc = await readJson(path.join(root, "server", "version.archive.json"));
   const have = gen?.commit || (arc?.commit && !arc.commit.includes("$Format") ? arc.commit : "") || info?.commit || "";
@@ -117,38 +140,16 @@ async function gh(url) {
 }
 
 /**
- * The build to update to: the newest `main` of every candidate, and the one
- * that is ahead of the rest. A candidate GitHub cannot answer for is skipped;
- * a comparison it cannot make keeps the build already leading. Throws only
- * when no candidate answered at all.
+ * Fetch the newest main from the selected repository only. An unavailable
+ * source is an update failure, never permission to choose a different fork.
  */
-export async function forwardBuild(ownRepo) {
-  const cands = [...BUILDS];
-  if (REPO_RE.test(ownRepo || "") && !cands.some((b) => b.repo.toLowerCase() === ownRepo.toLowerCase())) {
-    cands.push({ repo: ownRepo, label: ownRepo });
-  }
-  const heads = [];
-  let firstError = null;
-  for (const c of cands) {
-    try {
-      const head = await gh(`https://api.github.com/repos/${c.repo}/commits/main`);
-      const sha = String(head?.sha || "");
-      if (/^[0-9a-f]{7,40}$/i.test(sha)) heads.push({ ...c, sha, date: head.commit?.committer?.date || "" });
-    } catch (e) { firstError ||= e; }
-  }
-  if (!heads.length) throw firstError || new Error("GitHub returned an invalid commit.");
-  let best = heads[0], note = "";
-  for (const c of heads.slice(1)) {
-    if (c.sha === best.sha) continue;
-    try {
-      /* base...head across the fork network: "ahead" means head has commits
-       * base lacks and none the other way. */
-      const cmp = await gh(`https://api.github.com/repos/${best.repo}/compare/${best.sha}...${c.sha}`);
-      if (cmp?.status === "ahead") { note = `${c.label} is ${cmp.ahead_by} commit${cmp.ahead_by === 1 ? "" : "s"} ahead of ${best.label}`; best = c; }
-      else if (cmp?.status === "diverged") note = `${best.label} and ${c.label} have each moved on; staying with ${best.label}`;
-    } catch { /* cannot compare: keep the leader */ }
-  }
-  return { ...best, note };
+export async function forwardBuild(ownRepo = ORIGINAL) {
+  const repo = selectedRepository(ownRepo);
+  const label = BUILDS.find(build => build.repo.toLowerCase() === repo.toLowerCase())?.label || repo;
+  const head = await gh(`https://api.github.com/repos/${repo}/commits/main`);
+  const sha = typeof head?.sha === "string" ? head.sha : "";
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) throw new Error("GitHub returned an invalid commit.");
+  return { repo, label, sha, date: head.commit?.committer?.date || "", note: "" };
 }
 
 /** Keep every backup until every replacement is in place. A late copy failure
@@ -224,7 +225,9 @@ async function unzip(zip, into, platform) {
  */
 export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command = run, platform = process.platform, nodePath = process.execPath } = {}) {
   if (!["win32", "linux", "darwin"].includes(platform)) return { ok: false, changed: false, line: `Unsupported installation platform: ${platform}. Nothing was changed.` };
-  const src = await updateSource(root);
+  let src;
+  try { src = await updateSource(root); }
+  catch (error) { return { ok: false, changed: false, line: error.message }; }
   const dependencies = async (lockBefore, changed, line) => {
     try { await npmIfChanged(root, lockBefore, say, command, platform, nodePath); }
     catch (e) { return { ok: false, changed, restart: changed, line: `${changed ? "App files updated, but" : "The pending"} dependency install failed: ${e.message}. Press Update again to retry before starting Studio.` }; }
@@ -250,7 +253,7 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
     return dependencies(lockBefore, true, `Updated ${before.slice(0, 7)} → ${after.slice(0, 7)}. Close the launcher and open it again to use the new version.`);
   }
 
-  say("Asking GitHub which build is ahead…");
+  say(`Checking the newest main from ${src.repo}…`);
   let pick;
   try { pick = await forwardBuild(src.repo); }
   catch (e) { return { ok: false, changed: false, line: e.name === "TimeoutError" ? "GitHub did not answer in time." : e.message }; }

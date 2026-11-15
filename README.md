@@ -26,7 +26,8 @@
 </p>
 
 <p align="center">
-  Choose <b>Senzu’s build</b> (the original) or <b>Bucky’s</b> during setup.
+  <b>Senzu’s build</b> is the original and the default during setup.
+  <b>Bucky’s build</b> is an optional fork you can select deliberately.
 </p>
 
 <p align="center">
@@ -39,6 +40,11 @@ running dependency lifecycle scripts. It checks
 required files and startup imports before replacing an install. If an older
 installer left a `shared` module missing, reinstall into the same folder;
 settings, songs and models are kept. [Repair guide](INSTALL.md#if-the-launcher-says-a-shared-module-is-missing).
+
+Setup downloads the current `main` of the build you choose. The GitHub release
+date belongs to the installer, not the Studio code it downloads. **Update** in
+the launcher keeps your selected repository; a Git checkout pulls its own
+tracking branch.
 
 **Linux:** desktop packages for Intel/AMD x64 and ARM64 bring their own Node.js.
 Install the `.deb`, then open **AIPLAY Studio** from the application menu.

@@ -135,9 +135,10 @@ The native workflow mounts the actual disk image, copies and unmounts the app,
 checks its private runtime, and exercises installation of the tested full
 source SHA in an isolated home with spaces. It covers repair with custom
 workflow/settings preservation, the real launcher and Studio/DAW CPU startup,
-two ordinary Finder reopen requests through the same native host and child,
+two ordinary Finder reopen requests through the same native host and child
+(the host retries a refused browser hand-off up to four times),
 and keeping user files after removal of the copied app. Native runners cover
-macOS 14/26 on Apple silicon and macOS 15 on Intel. These checks do not certify
+macOS 15/26 on Apple silicon and macOS 15 on Intel. These checks do not certify
 quarantined-download approval, GPU engines or model output quality.
 
 CI acceptance supplies its temporary, contents-read GitHub token only for the
@@ -147,7 +148,7 @@ Ordinary public installation does not require a token or GitHub login.
 
 Require every native job to pass and verify the downloaded artifact hashes
 and metadata before publishing. Publish both `.dmg` files, their build metadata
-and combined checksums as the **pre-release** `macos-setup-v1.0` (or the next
+and combined checksums as the **pre-release** `macos-setup-v1.0.1` (or the next
 bootstrap version). Keep the asset names `AIPLAY-Studio-macOS-arm64.dmg` and
 `AIPLAY-Studio-macOS-x64.dmg`. Do not replace the Windows stable `latest` release.
 [The Mac install guide](docs/macOS-install.md) describes the security status

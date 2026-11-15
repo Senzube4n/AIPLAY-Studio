@@ -10,7 +10,7 @@ import { downloadVerified, verifyChecksumListing, validateRuntimeListing, digest
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[0-9a-f]{64}$/;
-export const MACOS_SETUP_VERSION = '1.0.0';
+export const MACOS_SETUP_VERSION = '1.0.1';
 export const MINIMUM_MACOS = '13.5';
 export const MACOS_SOURCE_FILES = [
   'scripts/build-macos-installer.mjs', 'scripts/build-linux-installer.mjs',
