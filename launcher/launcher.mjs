@@ -43,6 +43,7 @@ import { modeAllowed, modesForLevel, launcherLevel, advancedOnlyLine } from "./c
 import { runStudioPackages } from "../server/setup/engine-packages.js";
 /* Their names, from the one list the installer and the check use. */
 import { STUDIO_MODULES, moduleWords } from "../server/setup/studio-packages.js";
+import { listComfyInstalls } from "../server/setup/comfy-installs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
@@ -159,13 +160,20 @@ let installChild = null;
 const pkgRetry = { state: "idle", message: null };
 let pkgChild = null;
 const busyInstalling = () => !!installChild || install.state === "running" || !!pkgChild || pkgRetry.state === "running";
+let choosingComfy = false;
+let comfySelectionDone = Promise.resolve();
+const requireNoComfySelection = () => {
+  if (choosingComfy) throw new Error("Wait for the ComfyUI selection to finish.");
+};
 
 async function startStudioPackages() {
+  requireNoComfySelection();
   if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
   if (busyInstalling()) throw new Error("An install is already running.");
   if (child || studio.state === "starting") throw new Error("Stop Studio first: its engine is using that python.");
   const settings = (await readJson(SETTINGS)) || {};
   if (!settings.engineInstall || !settings.rig) throw new Error("Studio adds its packages only to an engine it installed itself.");
+  requireNoComfySelection();
   Object.assign(pkgRetry, { state: "running", message: null });
   emit("pkgretry", pkgRetry);
   addLog(`Installing Studio's own packages (${moduleWords(STUDIO_MODULES)}: only the ones that do not import) into its engine.`, "sys");
@@ -188,6 +196,7 @@ function setInstall(patch) {
 }
 
 async function startInstall(backend) {
+  requireNoComfySelection();
   if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
   if (busyInstalling()) throw new Error("An install is already running.");
   if (child || studio.state === "starting") throw new Error("Stop Studio first.");
@@ -272,6 +281,7 @@ let checkCache = null;
 let checkInFlight = null;
 
 async function systemCheck({ redetect = false } = {}) {
+  if (choosingComfy) await comfySelectionDone;
   const setupArgs = [path.join(ROOT, "scripts", "setup.mjs"), "--json", ...(redetect ? ["--redetect"] : [])];
   const setup = await runNode(setupArgs);
   let report = null;
@@ -319,7 +329,7 @@ async function systemCheck({ redetect = false } = {}) {
   const findTool = async (p) => (path.isAbsolute(p) ? (existsSync(p) ? p : null) : which(p));
   const [ffmpeg, ffprobe] = await Promise.all([findTool(ffmpegPath()), findTool(ffprobePath())]);
   const nodeMajor = Number(process.versions.node.split(".")[0]);
-  const comfyOk = !!(rig && python);
+  const comfyOk = report?.ok === true && !!(rig && python);
   const engineInstall = settings.engineInstall || report?.engineInstall || null;
   const cpuChosen = engineInstall?.backend === "cpu";
   const running = await probeStudio();
@@ -344,7 +354,7 @@ async function systemCheck({ redetect = false } = {}) {
       detail: gpu ? `read from ${gpu.source}` : torchBackend ? "" : "Choose what Studio should run on below." },
     ramItem(totalmem()),
     { id: "torch", label: "PyTorch in ComfyUI",
-      status: !torchBackend ? "bad" : report?.mismatch ? "bad" : torchBackend === "cpu" ? (cpuChosen ? "warn" : "bad") : "ok",
+      status: !torchBackend ? "bad" : torchBackend === "cpu" ? "warn" : report?.mismatch ? "bad" : "ok",
       value: torchBackend ? `${torchVersion} · ${torchBackend.toUpperCase()}` : "not read",
       detail: report?.mismatch || (torchBackend === "rocm" ? "AMD ROCm build" : torchBackend === "cuda" ? "NVIDIA CUDA build"
         : torchBackend === "xpu" ? "Intel XPU build" : cpuChosen ? "CPU only, as chosen at install — renders are slow" : "") },
@@ -454,6 +464,7 @@ function getCheck(redetect) {
 /* ── launch / wait / stop ──────────────────────────────────────────────── */
 
 async function launch(mode) {
+  requireNoComfySelection();
   if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
   if (existsSync(path.join(ROOT, ".aiplay-update-npm-pending"))) throw new Error("Press Update again to finish installing Studio's dependencies before starting.");
   if (studio.state === "starting") throw new Error("Studio is already starting.");
@@ -462,6 +473,7 @@ async function launch(mode) {
   if (!["full", "music", "cloud", "runpod"].includes(mode)) throw new Error("Unknown mode.");
   /* RunPod GPU is Advanced only: a Simple install is not offered it, here either. */
   if (!modeAllowed(mode, await studioLevel())) throw new Error(advancedOnlyLine(MODE_NAME[mode] || mode));
+  requireNoComfySelection();
 
   setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   const running = await probeStudio();
@@ -643,7 +655,51 @@ async function saveSettings(patch, remove = []) {
   return next;
 }
 
+async function requireComfySelectionIdle() {
+  if (child || ["starting", "ready", "stopping"].includes(studio.state))
+    throw new Error("Stop Studio before choosing a ComfyUI installation.");
+  if (busyInstalling()) throw new Error("Wait for the engine install to finish.");
+  if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
+  if (await probeStudio()) throw new Error("Stop the Studio running outside this launcher before choosing ComfyUI.");
+  // Other requests can run while the external-process probe is pending.
+  if (child || studio.state === "starting" || busyInstalling() || updating.state === "running")
+    throw new Error("Wait for Studio, the engine install or the update to stop.");
+}
+
+async function chooseComfyInstall(rig, { browse = false } = {}) {
+  requireNoComfySelection();
+  const pendingCheck = checkInFlight;
+  choosingComfy = true;
+  let finishSelection;
+  comfySelectionDone = new Promise((resolve) => { finishSelection = resolve; });
+  try {
+    // Let an earlier setup finish before selecting; later checks wait for us.
+    if (pendingCheck) await pendingCheck.catch(() => {});
+    await requireComfySelectionIdle();
+    if (browse) {
+      const saved = (await readJson(SETTINGS)) || {};
+      const picked = await pickFolderDialog(saved.rig || "", "Choose your ComfyUI folder (or the folder containing it)");
+      if (picked.unsupported) return { error: "The folder picker is Windows-only. Paste a ComfyUI folder in the chooser." };
+      if (picked.error) return { error: picked.error };
+      if (!picked.path) return { cancelled: true };
+      rig = picked.path;
+    }
+    if (typeof rig !== "string" || !rig.trim()) return { error: "Choose a ComfyUI installation first." };
+    await requireComfySelectionIdle();
+    // The setup finalizer validates Python before saving, and reuses Desktop
+    // model paths, portable flags and the concurrent-preference merge.
+    const setup = await runNode([path.join(ROOT, "scripts", "setup.mjs"), "--json", "--select-rig", rig,
+      "--require-studio-stopped"]);
+    let result = null;
+    try { result = JSON.parse(setup.stdout.trim().split(/\r?\n/).pop()); } catch { /* reported below */ }
+    if (setup.code !== 0 || !result?.ok) return { error: result?.error || "The ComfyUI installation could not be checked. No selection was saved." };
+    checkCache = null;
+    return { ok: true, rig: result.rig, python: result.python };
+  } finally { choosingComfy = false; finishSelection(); }
+}
+
 async function chooseFolder(what) {
+  if (what === "comfy") return chooseComfyInstall(null, { browse: true });
   const settings = (await readJson(SETTINGS)) || {};
   const ask = (start, caption) => pickFolderDialog(start || "", caption);
 
@@ -671,22 +727,6 @@ async function chooseFolder(what) {
         ? `${files.length} model file${files.length === 1 ? "" : "s"} found. Studio will load from here.`
         : "No models there yet: new downloads will go to this folder, and the models you already have keep working from where they are.",
     };
-  }
-
-  if (what === "comfy") {
-    const r = await ask(settings.rig, "Choose your ComfyUI folder (the one that contains a ComfyUI folder with main.py)");
-    if (r.unsupported) return { error: "The folder picker is Windows-only. Set \"rig\" in settings.json." };
-    if (r.error) return { error: r.error };
-    if (!r.path) return { cancelled: true };
-    /* Both spellings, because both are what people see in Explorer: the folder
-     * that CONTAINS ComfyUI, and ComfyUI itself. */
-    const rig = [r.path, path.dirname(r.path)].find((c) => existsSync(path.join(c, "ComfyUI", "main.py")));
-    if (!rig) return { error: `No ComfyUI in ${r.path} — expected ComfyUI\\main.py inside the folder you pick.` };
-    /* `python` is derived from the rig, so it is dropped rather than left
-     * pointing into the previous install's environment. */
-    await saveSettings({ rig }, ["python", "comfyExtraArgs", "launchFrom", "torchBackend", "torchVersion"]);
-    checkCache = null;
-    return { path: rig, note: "Re-reading this install's python and launch flags…" };
   }
 
   return { error: "Unknown folder." };
@@ -782,10 +822,12 @@ function makeServer(portRef) {
       }
       if (url.pathname === "/api/update") {
         if (req.method === "POST") {
+          requireNoComfySelection();
           if (child) return send(res, 200, { ...updating, error: "Stop Studio first: its files are about to be replaced." });
           if (await probeStudio()) return send(res, 200, { ...updating, error: "Stop the Studio running outside this launcher before updating." });
           if (child || studio.state === "starting") return send(res, 200, { ...updating, error: "Wait for Studio to finish starting, then stop it before updating." });
           if (busyInstalling()) return send(res, 200, { ...updating, error: "Wait for the engine install to finish." });
+          requireNoComfySelection();
           if (updating.state === "running") return send(res, 200, updating);
           Object.assign(updating, { state: "running", step: "Starting…", line: "", restart: false });
           selfUpdate({ root: ROOT, say: (t) => { updating.step = t; addLog(`update: ${t}`); } })
@@ -828,6 +870,14 @@ function makeServer(portRef) {
         return send(res, 200, await advancedState());
       }
       if (req.method === "POST" && url.pathname === "/api/show") { showWindow(); return send(res, 200, { ok: true }); }
+      if (req.method === "GET" && url.pathname === "/api/comfy-installs") {
+        const saved = (await readJson(SETTINGS)) || {};
+        return send(res, 200, { installs: await listComfyInstalls({ savedRig: saved.rig, validate: false }), selectedRig: saved.rig || null });
+      }
+      if (req.method === "POST" && url.pathname === "/api/comfy-install") {
+        const body = await readBody(req);
+        return send(res, 200, await chooseComfyInstall(body.rig));
+      }
       if (req.method === "POST" && url.pathname === "/api/pick") {
         if (child) return send(res, 200, { error: "Stop Studio first — the folders are read when it starts." });
         return send(res, 200, await chooseFolder(String((await readBody(req)).what || "")));

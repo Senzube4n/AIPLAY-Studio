@@ -195,17 +195,21 @@ test("Git updates preserve the clone's tracking branch and refuse dirty or diver
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("launch and engine install cannot start during an update or with pending npm repair", async () => {
+test("launch and engine install refuse updates, pending npm repair and active ComfyUI selection", async () => {
   const source = readFileSync(new URL("../launcher/launcher.mjs", import.meta.url), "utf8");
   const launchBody = source.slice(source.indexOf("async function launch(mode)"), source.indexOf("async function waitForEngine("));
   const installBody = source.slice(source.indexOf("async function startInstall(backend)"), source.indexOf("function which("));
-  const context = { updating: { state: "running" }, path, ROOT: "fixture", existsSync: () => true };
-  const launch = vm.runInNewContext(`(${launchBody})`, context);
-  const install = vm.runInNewContext(`(${installBody})`, context);
+  const guard = /const requireNoComfySelection = \(\) => \{[\s\S]*?\n\};/.exec(source)?.[0];
+  assert.ok(guard, "the isolated launcher functions use the real selection guard");
+  const context = { choosingComfy: false, updating: { state: "running" }, path, ROOT: "fixture", existsSync: () => true };
+  const { launch, install } = vm.runInNewContext(`${guard}\n({ launch: (${launchBody}), install: (${installBody}) })`, context);
   await assert.rejects(launch("full"), /Wait for the Studio update/);
   await assert.rejects(install("nvidia"), /Wait for the Studio update/);
   context.updating.state = "idle";
   await assert.rejects(launch("full"), /finish installing Studio's dependencies/);
+  context.choosingComfy = true;
+  await assert.rejects(launch("full"), /Wait for the ComfyUI selection to finish/);
+  await assert.rejects(install("nvidia"), /Wait for the ComfyUI selection to finish/);
 });
 
 test("an update takes whichever build is ahead; level or diverged goes to Senzu's", async () => {

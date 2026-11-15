@@ -115,6 +115,8 @@ node --test server/secrets_test.js || exit 1
 node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
 # The launcher favourite (the star) and the system check's settings merge.
 node --test server/launcher-fav_test.js || exit 1
+# ComfyUI discovery, in-app selection, and validated saves with isolated Python fixtures.
+node --test server/setup/comfy-installs_test.js launcher/comfy-chooser_test.mjs launcher/comfy-chooser-integration_test.mjs || exit 1
 node --check server/clip-favorites.js || exit 1
 node --test server/clip-favorites_test.js server/mcp-clip-favorites_test.js || exit 1
 node --test server/video-favorites-ui_test.js || exit 1

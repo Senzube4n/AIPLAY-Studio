@@ -23,7 +23,7 @@
  * from its own run_nvidia_gpu.bat / run_amd_gpu.bat the same way. Set
  * "launchFlagsSync": false in settings.json to manage those by hand.
  */
-import { stat, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { stat, mkdir, writeFile, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
@@ -31,6 +31,7 @@ import { stdin, stdout } from "node:process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { COMFY_TAG, comfyPinNote } from "../server/setup/pins.js";
+import { desktopInstalls, discoverComfyInstalls, normalizeComfyRig, sameComfyPath, validateComfyInstall } from "../server/setup/comfy-installs.js";
 
 const run = promisify(execFile);
 
@@ -52,6 +53,8 @@ const SETTINGS = path.join(
   "settings.json");
 const QUIET = process.argv.includes("--quiet-if-ready");
 const REDETECT = process.argv.includes("--redetect");
+const selectAt = process.argv.indexOf("--select-rig");
+const SELECT_RIG = selectAt >= 0 ? process.argv[selectAt + 1] : null;
 /* --json: never prompt; print one JSON report on stdout (what the launcher's
  * system check reads). Human-readable lines go to stderr instead. */
 const JSON_OUT = process.argv.includes("--json");
@@ -60,45 +63,7 @@ let report = { ok: false };
 
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
 const isEngine = async (rig) => exists(path.join(rig, "ComfyUI", "main.py"));
-const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-
-/** A ComfyUI needs a python that can actually run it. */
-async function pythonFor(rig) {
-  for (const rel of [["venv", "Scripts", "python.exe"], ["venv", "bin", "python"],
-                     ["python_embeded", "python.exe"], [".venv", "Scripts", "python.exe"],
-                     // ComfyUI Desktop: the venv sits INSIDE the ComfyUI folder.
-                     ["ComfyUI", ".venv", "Scripts", "python.exe"],
-                     ["ComfyUI", ".venv", "bin", "python"]]) {
-    const p = path.join(rig, ...rel);
-    if (await exists(p)) return p;
-  }
-  return null;
-}
-
-/* ── ComfyUI Desktop ───────────────────────────────────────────────────── */
-
-const DESKTOP_DIR = path.join(process.env.APPDATA || path.join(homedir(), "AppData", "Roaming"),
-  "Comfy Desktop");
-
-/** Local installs the Desktop app knows about, newest launch first. */
-async function desktopInstalls() {
-  let list;
-  try { list = JSON.parse(await readFile(path.join(DESKTOP_DIR, "installations.json"), "utf-8")); }
-  catch { return []; }
-  const out = [];
-  for (const i of Array.isArray(list) ? list : []) {
-    if (!i?.installPath || i.sourceId === "cloud") continue;
-    if (!(await isEngine(i.installPath))) continue;
-    const yaml = path.join(DESKTOP_DIR, "instance-model-paths", `${i.id}.yaml`);
-    out.push({
-      rig: i.installPath, id: i.id, variant: i.variant || null,
-      launchArgs: typeof i.launchArgs === "string" ? i.launchArgs : "",
-      modelPaths: (await exists(yaml)) ? yaml : null,
-      lastLaunchedAt: i.lastLaunchedAt || 0,
-    });
-  }
-  return out.sort((a, b) => b.lastLaunchedAt - a.lastLaunchedAt);
-}
+const samePath = sameComfyPath;
 
 /** The `is_default` base_path of an extra_model_paths YAML — where the Desktop
  *  app puts downloaded weights, and so where Studio should look and download. */
@@ -186,20 +151,6 @@ async function detectGpu() {
   return null;
 }
 
-/** Which torch build the engine python carries. Imports torch (a few seconds),
- *  so it runs only when the python changes. */
-async function torchBackend(py) {
-  const code = "import torch;v=torch.version;"
-    + "print(torch.__version__);print(getattr(v,'hip',None) or getattr(v,'rocm',None) or '');print(v.cuda or '')";
-  try {
-    const { stdout: o } = await run(py, ["-s", "-c", code], { timeout: 180000, windowsHide: true });
-    const [version = "", rocm = "", cuda = ""] = o.split(/\r?\n/).map((x) => x.trim());
-    return { version, backend: rocm ? "rocm" : cuda ? "cuda" : version.includes("+xpu") ? "xpu" : "cpu" };
-  } catch (e) {
-    return { version: null, backend: null, error: String(e.message || e).split("\n")[0] };
-  }
-}
-
 function mismatch(gpu, tb, chosen = null) {
   if (!tb?.backend) return null;
   /* Studio's own engine, installed for CPU on purpose: slow, not wrong. */
@@ -233,40 +184,7 @@ function mismatch(gpu, tb, chosen = null) {
  * rarely where 34 GB of weights lives.
  */
 async function guess() {
-  const home = homedir();
-  const roots = [
-    path.join(home, "ComfyUI"), path.join(home, "Documents", "ComfyUI"),
-    path.join(home, "Desktop", "ComfyUI"),
-    /* AppData, because the ComfyUI Desktop installer does not put itself on a
-     * drive root or in Documents the way the portable build does. These are the
-     * parent folders; the one-level-down scan below finds whatever it named the
-     * install, so this does not depend on knowing that layout exactly. */
-    process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
-    path.join(process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Programs"),
-    process.env.APPDATA || path.join(home, "AppData", "Roaming"),
-    path.join(process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Comfy-Desktop", "ComfyUI-Installs"),
-    ...["C", "D", "E", "F"].flatMap((d) => [
-      `${d}:\\ComfyUI`, `${d}:\\AI`, `${d}:\\AI\\ComfyUI`,
-      `${d}:\\ComfyUI_windows_portable`, `${d}:\\StabilityMatrix`,
-    ]),
-  ];
-  // The Desktop app's own record first: it is exact, and it is most recent-first.
-  const found = (await desktopInstalls()).map((d) => d.rig);
-  for (const r of roots) {
-    if (!(await exists(r))) continue;
-    if (await isEngine(r)) { found.push(r); continue; }
-    // One level down, so `D:\AI\<anything>\ComfyUI\main.py` is caught too.
-    try {
-      for (const e of await readdir(r, { withFileTypes: true })) {
-        if (!e.isDirectory()) continue;
-        const c = path.join(r, e.name);
-        if (await isEngine(c)) found.push(c);
-      }
-    } catch { /* unreadable drive */ }
-  }
-  const uniq = [];
-  for (const f of found) if (!uniq.some((u) => samePath(u, f))) uniq.push(f);
-  return uniq;
+  return (await discoverComfyInstalls()).map((entry) => entry.rig);
 }
 
 async function saved() {
@@ -278,19 +196,38 @@ async function saved() {
  * --redetect — the card and the torch build. Writes only when something changed.
  */
 async function finalize(rig, cur, { announce }) {
-  const py = await pythonFor(rig);
-  if (!py) {
-    console.log(`\n  Found ComfyUI at ${rig}, but no python environment inside it.`);
-    console.log(`  Looked for venv\\Scripts\\python.exe, python_embeded\\python.exe and ComfyUI\\.venv.`);
-    console.log(`  Start ComfyUI once on its own first — that is what creates it.\n`);
-    report = { ok: false, rig, error: `Found ComfyUI at ${rig}, but no python environment inside it.` };
+  const checked = await validateComfyInstall(rig);
+  if (!checked.valid) {
+    console.log(`\n  ${checked.error}\n`);
+    report = { ok: false, rig: checked.rig, error: checked.error };
+    return 1;
+  }
+  rig = checked.rig;
+  const py = checked.python;
+  if (selectAt >= 0 && process.env.AIPLAY_RIG) {
+    const override = await normalizeComfyRig(process.env.AIPLAY_RIG);
+    if (!override || !samePath(override, rig)) {
+      report = { ok: false, error: "AIPLAY_RIG overrides the selected installation. Remove that environment variable before choosing a different ComfyUI." };
+      return 1;
+    }
+  }
+  if (selectAt >= 0 && process.env.AIPLAY_PYTHON && !samePath(process.env.AIPLAY_PYTHON, py)) {
+    report = { ok: false, error: "AIPLAY_PYTHON overrides this installation's Python. Remove that environment variable before choosing a different ComfyUI." };
     return 1;
   }
   const next = { ...cur, rig, python: py };
   const notes = [];
 
-  const pythonChanged = cur.python !== py;
-  if (REDETECT || pythonChanged || !cur.gpu) {
+  // Installation-derived details belong to that engine; explicit user choices
+  // (manual flags and a pinned models folder) still belong to the user.
+  if (!samePath(cur.rig, rig)) {
+    for (const key of ["launchFrom", "torchBackend", "torchVersion", "engineInstall",
+      ...(cur.launchFlagsSync !== false ? ["comfyExtraArgs"] : []),
+      ...(!cur.modelsDirPinned ? ["modelsDir"] : [])])
+      delete next[key];
+  }
+
+  if (REDETECT || !cur.gpu) {
     const gpu = await detectGpu();
     if (gpu) next.gpu = gpu;
   }
@@ -315,14 +252,11 @@ async function finalize(rig, cur, { announce }) {
       if (bat) { next.comfyExtraArgs = bat.args; next.launchFrom = bat.file; }
     }
   }
-  if (REDETECT || pythonChanged || !cur.torchBackend) {
-    if (!QUIET || pythonChanged) console.log("  Checking which torch build the engine uses (a few seconds)…");
-    const tb = await torchBackend(py);
-    if (tb.backend) { next.torchBackend = tb.backend; next.torchVersion = tb.version; }
-    else notes.push(`Could not import torch with ${py}: ${tb.error}`);
-    const warn = mismatch(next.gpu, tb, next.engineInstall?.backend);
-    if (warn) notes.push(warn);
-  }
+  const tb = { backend: checked.torchBackend, version: checked.torchVersion };
+  next.torchBackend = tb.backend;
+  next.torchVersion = tb.version;
+  const warn = mismatch(next.gpu, tb, next.engineInstall?.backend);
+  if (warn) notes.push(warn);
   /* Studio's own engine on another ComfyUI than the pinned tag (one installed
    * before the pin). Read from the engine folder's own marker, so a ComfyUI the
    * person installed is never judged. One small file, so every run. */
@@ -341,6 +275,18 @@ async function finalize(rig, cur, { announce }) {
   }
 
   if (JSON.stringify(next) !== JSON.stringify(cur)) {
+    if (process.argv.includes("--require-studio-stopped")) {
+      let active = false;
+      try {
+        const response = await fetch(`http://127.0.0.1:${Number(process.env.AIPLAY_UI_PORT || 4173)}/api/status`,
+          { signal: AbortSignal.timeout(1500) });
+        active = response.ok;
+      } catch { /* No Studio server is running. */ }
+      if (active) {
+        report = { ok: false, error: "Stop the Studio running outside this launcher before choosing ComfyUI." };
+        return 1;
+      }
+    }
     /* ONLY WHAT THIS RUN CHANGED, merged into the file as it is NOW. The
      * launcher runs this check while its window is open, and a preference saved
      * meanwhile (the favourite star, closing stops Studio, a folder) was put back
@@ -370,6 +316,14 @@ async function finalize(rig, cur, { announce }) {
 
 async function main() {
   let cur = await saved();
+  // Explicit selection validates before GPU detection or any settings write.
+  if (selectAt >= 0) {
+    if (!SELECT_RIG || SELECT_RIG.startsWith("--")) {
+      report = { ok: false, error: "Choose a ComfyUI installation first." };
+      return 1;
+    }
+    return finalize(SELECT_RIG, cur, { announce: true });
+  }
   /* THE CARD FIRST, whatever else is missing. This used to be read only once a
    * ComfyUI was found, so a machine with no ComfyUI yet reported "No NVIDIA or
    * AMD card could be read" while the card sat right there — and the launcher's
