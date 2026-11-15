@@ -60,11 +60,11 @@ test("a zip install updates in place and keeps what is the person's", { skip: !c
     try { r = await selfUpdate({ root: app }); } finally { globalThis.fetch = real; }
 
     assert.equal(r.ok, true, r.line);
-    assert.ok(asked.some((u) => u.includes("/repos/someone/AIPLAY-Studio/commits/main")), "the repository install-info.json names is asked too");
-    assert.ok(asked.some((u) => u.includes("/repos/Senzube4n/AIPLAY-Studio/commits/main")), "and both builds");
-    assert.ok(asked.some((u) => u.includes("codeload.github.com/Senzube4n/AIPLAY-Studio/zip/")), "level: Senzu's build, the main one");
-    const compare = asked.findIndex(u => u.includes("/repos/Senzube4n/AIPLAY-Studio/compare/1111111...abcdef0123456789"));
-    assert.ok(compare >= 0 && compare < asked.findIndex(u => u.includes("codeload.github.com")), "prove the chosen fork contains the installed commit before downloading");
+    assert.deepEqual(asked.filter(u => u.includes("/commits/main")),
+      ["https://api.github.com/repos/someone/AIPLAY-Studio/commits/main"], "only the explicitly selected repository is asked");
+    assert.ok(asked.some((u) => u.includes("codeload.github.com/someone/AIPLAY-Studio/zip/")), "the selected fork supplies the update");
+    const compare = asked.findIndex(u => u.includes("/repos/someone/AIPLAY-Studio/compare/1111111...abcdef0123456789"));
+    assert.ok(compare >= 0 && compare < asked.findIndex(u => u.includes("codeload.github.com")), "prove the selected repository contains the installed commit before downloading");
     assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), "new");
     assert.equal(await readFile(path.join(app, "launcher/launcher.mjs"), "utf8"), "new");
     assert.ok(!existsSync(path.join(app, "server/dropped.js")), "a file the new build dropped is gone");
@@ -75,15 +75,14 @@ test("a zip install updates in place and keeps what is the person's", { skip: !c
     assert.equal(JSON.parse(await readFile(path.join(app, "server/version.gen.json"), "utf8")).commit, "abcdef0");
     assert.equal((await updateSource(app)).have, "abcdef0");
 
-    /* Already current: one question per build (all level, so no comparison),
-     * nothing downloaded. The update recorded the build it took as the
-     * install's own, so the third fork is no longer asked. */
-    assert.equal(JSON.parse(await readFile(path.join(app, "install-info.json"), "utf8")).repo, "Senzube4n/AIPLAY-Studio");
+    /* Already current: the same selected repository, without a download or
+     * any cross-fork comparison. */
+    assert.equal(JSON.parse(await readFile(path.join(app, "install-info.json"), "utf8")).repo, "someone/AIPLAY-Studio");
     globalThis.fetch = async (url) => { asked.push(String(url)); return { ok: true, status: 200, json: async () => ({ sha: "abcdef0123456789", commit: {} }) }; };
     const n = asked.length;
     try { r = await selfUpdate({ root: app }); } finally { globalThis.fetch = real; }
     assert.equal(r.line, "Already up to date.");
-    assert.equal(asked.length, n + 2);
+    assert.equal(asked.length, n + 1);
     assert.ok(asked.slice(n).every((u) => u.includes("/commits/main")));
   } finally { await rm(base, { recursive: true, force: true }); }
 });
@@ -115,6 +114,47 @@ test("ZIP source selection respects an explicit installer choice, then fork meta
     await files(base, { ".git": "gitdir: not-a-real-worktree" });
     assert.equal((await updateSource(base)).kind, "git", "a worktree stays on the git path, never ZIP replacement");
   } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("missing source metadata defaults to Senzu without querying any fork", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "aiplay-update-default-"));
+  const real = globalThis.fetch;
+  try {
+    for (const metadata of [null, {}]) {
+      if (metadata) await files(base, { "install-info.json": "{}", "package.json": "{}" });
+      const asked = [];
+      globalThis.fetch = async input => { asked.push(String(input)); return { ok: false, status: 503 }; };
+      const result = await selfUpdate({ root: base });
+      assert.equal(result.ok, false);
+      assert.deepEqual(asked, ["https://api.github.com/repos/Senzube4n/AIPLAY-Studio/commits/main"]);
+    }
+  } finally { globalThis.fetch = real; await rm(base, { recursive: true, force: true }); }
+});
+
+test("invalid explicit repository metadata refuses before network and cannot fall back", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "aiplay-update-invalid-source-"));
+  const real = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = () => { requests++; throw Error("must not fetch invalid source"); };
+  try {
+    for (const invalid of [null, false, 0, 42, [], {}, "", "owner", "owner/repo/extra", "../repo", "owner/..", "owner/repo?other"]) {
+      const info = JSON.stringify({ repo: invalid });
+      await files(base, { "install-info.json": info, "package.json": '{"aiplay":{"lineage":{"repo":"valid/fork"}}}',
+        "server/index.js": "keep this app" });
+      const result = await selfUpdate({ root: base });
+      assert.equal(result.ok, false); assert.equal(result.changed, false);
+      assert.match(result.line, /selected update repository is invalid/);
+      assert.equal(await readFile(path.join(base, "install-info.json"), "utf8"), info);
+      assert.equal(await readFile(path.join(base, "server/index.js"), "utf8"), "keep this app");
+      await assert.rejects(forwardBuild(invalid), /selected update repository is invalid/);
+    }
+    await rm(path.join(base, "install-info.json"));
+    await files(base, { "package.json": '{"aiplay":{"lineage":{"repo":false}}}' });
+    assert.match((await selfUpdate({ root: base })).line, /selected update repository is invalid/);
+    await files(base, { "install-info.json": "{broken JSON" });
+    assert.match((await selfUpdate({ root: base })).line, /source metadata install-info.json is invalid/);
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = real; await rm(base, { recursive: true, force: true }); }
 });
 
 async function withUpdateFixture(fn) {
@@ -212,50 +252,52 @@ test("launch and engine install refuse updates, pending npm repair and active Co
   await assert.rejects(install("nvidia"), /Wait for the ComfyUI selection to finish/);
 });
 
-test("an update takes whichever build is ahead; level or diverged goes to Senzu's", async () => {
+test("updates query only the selected repository, with Senzu as the default", async () => {
   const real = globalThis.fetch;
-  const heads = {}, compare = {};
-  globalThis.fetch = async (url) => {
-    url = String(url);
-    const m = url.match(/repos\/([^/]+\/[^/]+)\/commits\/main$/);
-    if (m) return heads[m[1]] ? { ok: true, status: 200, json: async () => ({ sha: heads[m[1]], commit: { committer: { date: "d" } } }) } : { ok: false, status: 404 };
-    const c = url.match(/compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)$/);
-    if (c) return { ok: true, status: 200, json: async () => compare[`${c[1]}...${c[2]}`] };
-    throw new Error(`unexpected ${url}`);
-  };
   const S = "Senzube4n/AIPLAY-Studio", B = "bani4kaskashka/AIPLAY-Studio-Bucky-Fork";
   try {
-    // Senzu ahead of Bucky: an install made from Bucky's build still takes Senzu's.
-    Object.assign(heads, { [S]: "aaaaaaa1", [B]: "bbbbbbb1" });
-    compare["aaaaaaa1...bbbbbbb1"] = { status: "behind", ahead_by: 0, behind_by: 5 };
-    let r = await forwardBuild(B);
-    assert.equal(r.repo, S);
-    // Bucky ahead: Bucky's.
-    compare["aaaaaaa1...bbbbbbb1"] = { status: "ahead", ahead_by: 3, behind_by: 0 };
-    r = await forwardBuild(S);
-    assert.equal(r.repo, B);
-    assert.match(r.note, /Bucky's build is 3 commits ahead of Senzu's build/);
-    // Diverged: Senzu's, and it says why.
-    compare["aaaaaaa1...bbbbbbb1"] = { status: "diverged", ahead_by: 2, behind_by: 4 };
-    r = await forwardBuild(B);
-    assert.equal(r.repo, S);
-    assert.match(r.note, /each moved on/);
-    // A third fork that is ahead of both wins.
-    heads["someone/fork"] = "ccccccc1";
-    compare["aaaaaaa1...ccccccc1"] = { status: "ahead", ahead_by: 1, behind_by: 0 };
-    r = await forwardBuild("someone/fork");
-    assert.equal(r.repo, "someone/fork");
-    // One build unreachable: the other one.
-    delete heads[S];
-    r = await forwardBuild(B);
-    assert.equal(r.repo, B);
-    // Nothing reachable: the error, not a guess.
-    for (const k of Object.keys(heads)) delete heads[k];
-    await assert.rejects(forwardBuild(B), /GitHub answered 404/);
+    for (const repo of [undefined, S, B, "someone/fork"]) {
+      const asked = [], expected = repo || S;
+      globalThis.fetch = async input => {
+        const url = String(input); asked.push(url);
+        assert.equal(url, `https://api.github.com/repos/${expected}/commits/main`);
+        return { ok: true, json: async () => ({ sha: "abcdef0123456789", commit: { committer: { date: "d" } } }) };
+      };
+      const result = await forwardBuild(repo);
+      assert.equal(result.repo, expected);
+      assert.equal(result.sha, "abcdef0123456789");
+      assert.equal(result.label, expected === S ? "Senzu's build" : expected === B ? "Bucky's build" : expected);
+      assert.equal(asked.length, 1, "no other build is ranked, even if another fork could be ahead");
+    }
   } finally { globalThis.fetch = real; }
 });
 
-test("ZIP updates refuse a downgrade or unproven ancestry when the installed fork is unreachable", async () => {
+test("an unavailable selected repository never falls back to another build", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "aiplay-update-unavailable-"));
+  const real = globalThis.fetch;
+  try {
+    for (const repo of ["Senzube4n/AIPLAY-Studio", "bani4kaskashka/AIPLAY-Studio-Bucky-Fork", "someone/fork"]) {
+      const info = JSON.stringify({ repo, commit: "1111111" });
+      await files(base, { "server/index.js": "installed app", "install-info.json": info });
+      for (const unavailable of ["offline", 404, 503]) {
+        const asked = [];
+        globalThis.fetch = async input => {
+          const url = String(input); asked.push(url);
+          assert.equal(url, `https://api.github.com/repos/${repo}/commits/main`);
+          if (unavailable === "offline") throw new Error("fixture offline");
+          return { ok: false, status: unavailable };
+        };
+        const result = await selfUpdate({ root: base, command: () => assert.fail("must not run a command") });
+        assert.equal(result.ok, false); assert.equal(result.changed, false);
+        assert.match(result.line, unavailable === "offline" ? /offline/ : new RegExp(`GitHub answered ${unavailable}`));
+        assert.equal(asked.length, 1, "failure stops after the selected repository");
+        assert.equal(await readFile(path.join(base, "server/index.js"), "utf8"), "installed app");
+        assert.equal(await readFile(path.join(base, "install-info.json"), "utf8"), info);
+      }
+    }
+  } finally { globalThis.fetch = real; await rm(base, { recursive: true, force: true }); }
+});
+test("ZIP updates verify ancestry within the selected repository before replacing the installed app", async () => {
   const base = await mkdtemp(path.join(tmpdir(), "aiplay-update-ancestry-"));
   const real = globalThis.fetch;
   try {
@@ -271,9 +313,11 @@ test("ZIP updates refuse a downgrade or unproven ancestry when the installed for
       const asked = [];
       globalThis.fetch = async input => {
         const url = String(input); asked.push(url);
-        if (url.includes("bani4kaskashka/AIPLAY-Studio-Bucky-Fork/commits/main")) return { ok: false, status: 503 };
-        if (url.includes("/commits/main")) return { ok: true, json: async () => ({ sha: "aaaaaaa1", commit: {} }) };
-        assert.match(url, /\/repos\/Senzube4n\/AIPLAY-Studio\/compare\/bbbbbbb\.\.\.aaaaaaa1$/);
+        if (url.includes("/commits/main")) {
+          assert.equal(url, "https://api.github.com/repos/bani4kaskashka/AIPLAY-Studio-Bucky-Fork/commits/main");
+          return { ok: true, json: async () => ({ sha: "aaaaaaa1", commit: {} }) };
+        }
+        assert.match(url, /\/repos\/bani4kaskashka\/AIPLAY-Studio-Bucky-Fork\/compare\/bbbbbbb\.\.\.aaaaaaa1$/);
         return scenario.http ? { ok: false, status: scenario.http } : { ok: true, json: async () => ({ status: scenario.relation }) };
       };
       const result = await selfUpdate({ root: base, command: async () => { throw new Error("No dependency install may run."); } });

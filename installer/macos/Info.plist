@@ -7,8 +7,8 @@
   <key>CFBundleExecutable</key><string>AIPLAY Studio</string>
   <key>CFBundleIdentifier</key><string>org.aiplay.studio</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1.0.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0.1</string>
+  <key>CFBundleVersion</key><string>1.0.1</string>
   <key>CFBundleIconFile</key><string>AIPLAY.icns</string>
   <key>LSMinimumSystemVersion</key><string>13.5</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>

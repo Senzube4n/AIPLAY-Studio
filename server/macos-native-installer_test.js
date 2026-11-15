@@ -62,7 +62,7 @@ function redactedEventRows(rows) {
   return rows.slice(-24).map(row => {
     const result = {};
     for (const key of ['event', 'kind']) if (typeof row?.[key] === 'string') result[key] = redactedDiagnosticText(row[key], 64);
-    for (const key of ['hostPid', 'childPid', 'childCount', 'status']) if (Number.isSafeInteger(row?.[key])) result[key] = row[key];
+    for (const key of ['hostPid', 'childPid', 'childCount', 'status', 'attempts']) if (Number.isSafeInteger(row?.[key])) result[key] = row[key];
     if (typeof row?.opened === 'boolean') result.opened = row.opened;
     return result;
   });
@@ -113,6 +113,10 @@ async function hostEvents(file, hostPid) {
       assert.equal(url.protocol, 'http:'); assert.equal(url.hostname, '127.0.0.1');
       assert.ok(Number(url.port) > 0 && Number(url.port) <= 65535 && !url.username && !url.password);
     }
+    if (event.event === 'reopen') {
+      assert.ok(Number.isSafeInteger(event.attempts) && event.attempts >= 1 && event.attempts <= 4,
+        'Browser reopen attempts stay within the native retry limit.');
+    }
     return event;
   });
 }
@@ -157,12 +161,29 @@ test('native failure diagnostics redact URLs and credentials and bound captured 
 
 test('native event diagnostics preserve only bounded lifecycle fields, never event URLs or other text', () => {
   const rows = Array.from({ length: 30 }, (_, hostPid) => ({ event: 'reopen', kind: 'launcher', hostPid,
-    childPid: 9, childCount: 1, opened: false, status: 0, url: 'http://127.0.0.1:1234/private-token/', arbitrary: 'secret' }));
+    childPid: 9, childCount: 1, opened: false, status: 0, attempts: 4, url: 'http://127.0.0.1:1234/private-token/', arbitrary: 'secret' }));
   const safe = redactedEventRows(rows);
   assert.equal(safe.length, 24);
   assert.equal(safe[0].hostPid, 6);
-  assert.deepEqual(Object.keys(safe[0]).sort(), ['childCount', 'childPid', 'event', 'hostPid', 'kind', 'opened', 'status']);
+  assert.deepEqual(Object.keys(safe[0]).sort(), ['attempts', 'childCount', 'childPid', 'event', 'hostPid', 'kind', 'opened', 'status']);
+  assert.equal(safe[0].attempts, 4);
   assert.doesNotMatch(JSON.stringify(safe), /private-token|127\.0\.0\.1|arbitrary|secret/);
+});
+
+test('native reopen events require a retry count within the four-attempt limit', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'aiplay-macos-reopen-events-'));
+  const file = path.join(root, 'events.jsonl');
+  const row = { event: 'reopen', hostPid: 123, childPid: 456, childCount: 1, opened: true };
+  try {
+    for (const attempts of [1, 4]) {
+      await writeFile(file, JSON.stringify({ ...row, attempts }) + '\n');
+      assert.equal((await hostEvents(file, 123))[0].attempts, attempts);
+    }
+    for (const attempts of [undefined, 0, 5, 1.5, '2']) {
+      await writeFile(file, JSON.stringify({ ...row, attempts }) + '\n');
+      await assert.rejects(hostEvents(file, 123), /retry limit/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('native diagnostic files save safe complete event rows and preserve an existing receipt', async () => {

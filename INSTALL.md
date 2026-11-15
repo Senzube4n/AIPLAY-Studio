@@ -319,11 +319,12 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 ### The easy way: AIPLAY Studio Setup.exe
 
-Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it, pick Senzu's build (the original, and the
-default) or Bucky's, and press **Install**. It shows how far apart the two are
-(ahead / behind) before you choose. It then:
+Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it, and keep **Senzu's build**, the
+original and default, selected. **Bucky's build** is an optional fork; choose it
+only when that is the build you want. Press **Install**. Setup shows how far
+apart the two are (ahead / behind) before you choose. It then:
 
-- downloads that build's newest commit straight from GitHub, with no account;
+- downloads that build's newest `main` commit straight from GitHub, with no account;
 - unpacks only what the repository's `install.json` lists, so no docs or notes;
 - uses your Node.js 20+ if you have one. If you don't, it puts the official
   portable Node.js from nodejs.org into the install folder, checked against
@@ -335,9 +336,16 @@ default) or Bucky's, and press **Install**. It shows how far apart the two are
 The installer is currently unsigned. If antivirus blocks it, use the
 [source-install alternative](#if-antivirus-blocks-the-installer).
 
+The GitHub release date is the date of the **installer**, not the Studio code
+it downloads. Setup fetches the current `main` of the selected repository each
+time it installs; a new Studio change does not require a new Setup.exe release.
+
 **Updating** is the launcher's job: **Update**, beside Check for updates at the
-bottom of the launcher, downloads the newest version of the build you installed
-and replaces the app files (a git clone pulls instead). Studio has to be
+bottom of the launcher, downloads the newest `main` of your selected repository
+and replaces the app files. Senzu installs stay on Senzu's repository; an
+explicitly selected fork stays on that fork. Another build being ahead, or a
+GitHub request failing, does not change that choice. A Git clone pulls its own
+tracking branch instead. Studio has to be
 stopped; songs, settings, models, your custom workflows and the private Node.js
 are kept.
 
