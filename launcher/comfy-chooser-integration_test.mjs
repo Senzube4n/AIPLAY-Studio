@@ -8,7 +8,7 @@ import http from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { once } from "node:events";
-import { mkdtemp, mkdir, writeFile, readFile, access, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, access, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ test("HTTP chooser validates Python, saves the chosen rig and rejects unsafe or 
   const python = await findPython();
   if (!python) return t.skip("Python 3 is unavailable; set AIPLAY_TEST_PYTHON to run the subprocess integration test.");
 
-  const fixture = await mkdtemp(path.join(tmpdir(), "aiplay-comfy-http-"));
+  const fixture = await realpath(await mkdtemp(path.join(tmpdir(), "aiplay-comfy-http-")));
   let child;
   let launcherUrl;
   let externalStudio = false;

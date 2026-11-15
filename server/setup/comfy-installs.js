@@ -11,7 +11,12 @@ export const sameComfyPath = (a, b) => {
   const key = (p) => process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p);
   return !!a && !!b && key(a) === key(b);
 };
-export const desktopDirectory = () => path.join(process.env.APPDATA || path.join(homedir(), "AppData", "Roaming"), "Comfy Desktop");
+export function desktopDirectory({ home = homedir(), env = process.env, platform = process.platform } = {}) {
+  if (env.APPDATA) return path.join(env.APPDATA, "Comfy Desktop");
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Comfy Desktop");
+  if (platform === "linux") return path.join(env.XDG_DATA_HOME || path.join(home, ".local", "share"), "comfyui-desktop-2");
+  return path.join(home, "AppData", "Roaming", "Comfy Desktop");
+}
 
 export async function normalizeComfyRig(input) {
   if (typeof input !== "string" || !input.trim()) return null;
@@ -60,11 +65,11 @@ export function defaultComfyRoots({ home = homedir(), env = process.env, platfor
   }
   return [path.join(env.AIPLAY_APPDATA || path.join(home, ".aiplay-studio"), "engine"),
     path.join(home, "ComfyUI"), path.join(home, "Documents", "ComfyUI"), path.join(home, "Desktop", "ComfyUI"),
+    path.join(home, "ComfyUI-Installs"),
     ...(platform === "win32" ? [env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
       path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Programs"),
       env.APPDATA || path.join(home, "AppData", "Roaming"),
       path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Comfy-Desktop", "ComfyUI-Installs"),
-      path.join(home, "ComfyUI-Installs"),
       ...["C", "D", "E", "F"].flatMap((d) => [`${d}:\\ComfyUI`, `${d}:\\AI`, `${d}:\\AI\\ComfyUI`,
         `${d}:\\ComfyUI_windows_portable`, `${d}:\\StabilityMatrix`])] : []),
   ];

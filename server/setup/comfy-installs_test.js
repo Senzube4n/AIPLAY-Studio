@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { normalizeComfyRig, discoverComfyInstalls, pythonForComfy, listComfyInstalls, validateComfyInstall } from "./comfy-installs.js";
+import { normalizeComfyRig, discoverComfyInstalls, pythonForComfy, listComfyInstalls, validateComfyInstall, desktopDirectory, defaultComfyRoots } from "./comfy-installs.js";
 
 const run = promisify(execFile);
 const temporary = async (t) => {
-  const dir = await mkdtemp(path.join(tmpdir(), "aiplay-comfy-choice-"));
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "aiplay-comfy-choice-")));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 };
@@ -22,6 +22,20 @@ const fixture = async (root, name, python = "ComfyUI/.venv/Scripts/python.exe") 
   return rig;
 };
 const marker = (backend = "cpu") => `AIPLAY_TORCH:${JSON.stringify({ version: "2.9.0", backend })}\n`;
+
+test("Desktop registry locations follow Windows, macOS and Linux data directories", () => {
+  const home = path.resolve("fixture-home");
+  const appdata = path.resolve("fixture-roaming");
+  const xdg = path.resolve("fixture-data");
+  assert.equal(desktopDirectory({ home, env: {}, platform: "win32" }), path.join(home, "AppData", "Roaming", "Comfy Desktop"));
+  assert.equal(desktopDirectory({ home, env: {}, platform: "darwin" }), path.join(home, "Library", "Application Support", "Comfy Desktop"));
+  assert.equal(desktopDirectory({ home, env: {}, platform: "linux" }), path.join(home, ".local", "share", "comfyui-desktop-2"));
+  assert.equal(desktopDirectory({ home, env: { XDG_DATA_HOME: xdg }, platform: "linux" }), path.join(xdg, "comfyui-desktop-2"));
+  for (const platform of ["win32", "darwin", "linux"]) {
+    assert.equal(desktopDirectory({ home, env: { APPDATA: appdata, XDG_DATA_HOME: xdg }, platform }), path.join(appdata, "Comfy Desktop"));
+    assert.ok(defaultComfyRoots({ home, env: {}, platform }).includes(path.join(home, "ComfyUI-Installs")));
+  }
+});
 
 test("discovery names Desktop installs, excludes cloud and deduplicates direct/source paths", async (t) => {
   const root = await temporary(t);

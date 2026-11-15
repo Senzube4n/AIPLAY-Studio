@@ -513,11 +513,20 @@ console.log("\n  every relative link resolves");
   const install = read("INSTALL.md");
   const other = install.slice(install.indexOf("## Other platforms"), install.indexOf("## Where things live"));
   ok("INSTALL.md's Other platforms names AIPLAY_RIG and AIPLAY_PYTHON", /AIPLAY_RIG=/.test(other) && /AIPLAY_PYTHON=/.test(other));
-  const setup = read("scripts/setup.mjs");
-  const looks = /async function pythonFor\(rig\) \{[\s\S]*?\n\}/.exec(setup)?.[0] || "";
-  for (const [doc, rel] of [["venv/bin/python", `["venv", "bin", "python"]`], ["ComfyUI/.venv/bin/python", `["ComfyUI", ".venv", "bin", "python"]`]]) {
-    ok(`INSTALL.md says setup finds ${doc}, and setup.mjs looks there`, other.includes(`\`${doc}\``) && looks.includes(rel));
-  }
+  const { pythonForComfy } = await import("./setup/comfy-installs.js");
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const fixture = await mkdtemp(path.join(tmpdir(), "aiplay-docs-python-"));
+  try {
+    for (const doc of ["venv/bin/python", "ComfyUI/.venv/bin/python"]) {
+      const rig = path.join(fixture, doc.startsWith("ComfyUI/") ? "desktop" : "source");
+      const interpreter = path.join(rig, ...doc.split("/"));
+      await mkdir(path.dirname(interpreter), { recursive: true });
+      await writeFile(interpreter, "fixture");
+      ok(`INSTALL.md says setup finds ${doc}, and discovery finds it`,
+        other.includes(`\`${doc}\``) && await pythonForComfy(rig) === interpreter);
+    }
+  } finally { await rm(fixture, { recursive: true, force: true }); }
   ok("config.js reads AIPLAY_PYTHON first, as the note says", /python: process\.env\.AIPLAY_PYTHON \|\| saved\.python \|\| detectPython\(RIG\),/.test(read("server/config.js")));
 }
 
