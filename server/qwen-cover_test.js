@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET } from "./h3-image.js";
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "qwen-cover-"));
 process.env.AIPLAY_APPDATA = path.join(temp, "settings");
@@ -219,6 +220,7 @@ test("API response, real queue, sampler and saved image provenance keep the same
     safetyRefusal, lineage: () => ({ texts: [], flags: [] }),
   };
   deps.provNote = (_, event) => deps.ledger.push(event);
+  Object.assign(deps, { h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET });
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const bindings = `const { ${Object.keys(deps).join(", ")}, readBody }=deps;`;
   const runRoute = new AsyncFunction("deps", `${bindings} ${source.slice(routeStart, routeEnd)}`);
@@ -292,6 +294,7 @@ test("a Fast draft renders the LoRA graph and its picture and ledger line say so
     safetyRefusal, lineage: () => ({ texts: [], flags: [] }),
   };
   deps.provNote = (_, event) => deps.ledger.push(event);
+  Object.assign(deps, { h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET });
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const bindings = `const { ${Object.keys(deps).join(", ")}, readBody }=deps;`;
   const runRoute = new AsyncFunction("deps", `${bindings} ${source.slice(routeStart, routeEnd)}`);

@@ -454,7 +454,7 @@ console.log("\n§3  the two tools that were missing");
 {
   const sie = tool("set_image_engine"), dm = tool("download_model");
   ok("set_image_engine exists and offers every image engine, MOSS and krea2 included, and \"auto\" (forget the choice)",
-    JSON.stringify(sie?.inputSchema?.properties?.engine?.enum) === JSON.stringify(["auto", "qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"]));
+    JSON.stringify(sie?.inputSchema?.properties?.engine?.enum) === JSON.stringify(["auto", "qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "h3-image", "checkpoint"]));
   ok("...posting the Images page's own door", /\{ engine: a\.engine/.test(String(sie?.run || "")) && /api\("POST", "\/api\/artconfig", body\)/.test(String(sie?.run || "")));
   ok("...and describing MOSS as experimental text only with no references or editing",
     /moss-image: experimental.*text only; no references or editing/.test(sie?.description || "") && /moss_image_status/.test(sie?.description || ""));

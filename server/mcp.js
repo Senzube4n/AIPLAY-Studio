@@ -2794,9 +2794,10 @@ export const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
+        engine: { type: "string", enum: ["qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "h3-image", "checkpoint"],
           description: "moss-image: experimental native MOSS-Image SFT text-to-image, Apache-2.0, 25 steps, CFG 2.5, er_sde/simple; no refs, personas, editing, transparency or Fast draft. Check moss_image_status. qwen-image-2.1: native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
             + "flux2: FLUX.2 klein 4B, Apache-2.0, 4 steps, also takes ref_images. "
+            + "h3-image: MiniMax H3 Image, photoreal and character edits with up to 10 ref_images (the prompt names them <Picture 1>, <Picture 2>... in order), 6 steps at CFG 1, lcm or euler; NO negative (put what to avoid at the end of the prompt); H3 Community Licence, territory-restricted. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
             + "the negative branch is never evaluated — passing one is refused, not ignored) and no refs. "
@@ -3060,13 +3061,14 @@ export const TOOLS = [
       + "anima: anime and illustration. "
       + "ideogram4: typography and layouts; ⚠ NON-COMMERCIAL licence. "
       + "krea2: Krea 2 Turbo, the frontier open-weights look, measured 26 s a picture warm (ten times FLUX.2); commercial use only under USD 1M company-wide revenue; no references, no negative. "
+      + "h3-image: MiniMax H3 Image, up to 10 references, 6 steps at CFG 1; no negative. "
       + "checkpoint: a file from models/checkpoints; pass `checkpoint` (a name from list_checkpoints). "
       + "Refused when that engine's weights are not downloaded (models_for_this_machine says; download_model fetches).",
     inputSchema: {
       type: "object",
       required: ["engine"],
       properties: {
-        engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
+        engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "h3-image", "checkpoint"] },
         checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with (covers only; a picture's own file is picked per picture)." },
         use_for: { type: "string", enum: ["covers", "pictures", "both"],
           description: "covers (default): the engine that paints song covers. pictures: the Pictures screen's engine, used by make_image and music-video stills when they name none; kept even when its files are missing (make_image then says what to download). both." },

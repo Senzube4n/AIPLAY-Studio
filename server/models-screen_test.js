@@ -188,7 +188,7 @@ test("every screen's 'model not installed' opens the model window, gated ones wi
   assert.match(app, /if \(!offerModel\(r\)\) await appAlert\(r\.error, "Nothing was queued"\)/, "the Images screen too");
   assert.match(app, /if \(!e\.isTrusted\) return;/, "the Images picker asks at the pick, never on page load");
   const index = src("./index.js");
-  assert.equal((index.match(/needsModel: cap\?\.id \|\| null/g) || []).length, 4, "each image engine's refusal names its row");
+  assert.equal((index.match(/needsModel: cap\?\.id \|\| null/g) || []).length, 5, "each image engine's refusal names its row");
   assert.ok((index.match(/capability: capId/g) || []).length >= 3, "gated refusals name their row too");
   const rowsFor = new Function(`${pick.match(/const MUSIC_ROWS[\s\S]*?\nfunction rowsFor[\s\S]*?\n\}/)[0]}; return rowsFor;`)();
   const caps = [{ id: "videoLtx", group: "video", gated: {} }, { id: "video", group: "video" }, { id: "animateDiffV3", group: "video" },

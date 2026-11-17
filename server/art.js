@@ -28,6 +28,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { config, savedCardVendor } from "./config.js";
 import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET, QWEN_IMAGE_FILES } from "./qwen-image.js";
+import { h3ImageGraph, h3ImageSettings, H3_IMAGE_ENGINE } from "./h3-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
 import { mossImageGraph, mossImageSettings, MOSS_IMAGE_PRESET } from "./moss-image.js";
 import { mossImageStatus } from "./moss-status.js";
@@ -2291,6 +2292,19 @@ export class ArtRunner extends EventEmitter {
         sampler: job.sampler, scheduler: job.scheduler, count: job.count,
         prefix: PREFIX,
       });
+    } else if (!graph && engine === H3_IMAGE_ENGINE) {
+      /* MiniMax-H3-Image (h3-image.js): 6 steps, CFG 1, references as
+       * <Picture N> in the order staged. The encoder is H3 video's own pick
+       * (int8 or int4, whichever is on disk). */
+      graph = h3ImageGraph({
+        prompt, seed: job.seed, width: job.width, height: job.height,
+        steps: standalone ? job.steps : undefined, count: job.count, prefix: PREFIX,
+        sampler: job.sampler, scheduler: job.scheduler,
+        refImages: (job.refImages || []).filter(Boolean), thumbSize: config.art.thumbSize,
+        dit: ownDit, encoder: ownEncoder || config.video?.engines?.h3?.textEncoder || null, vae: ownVae,
+      });
+      job._paintedWith = graph[1].inputs.unet_name;
+      job._imageOptions = h3ImageSettings(graph);
     } else if (!graph && engine === "krea2") {
       /* Krea 2 Turbo: the vendor's 8-step recipe, cfg 1.0. `steps` arrives
        * undefined unless asked for, for the same reason as Z-Image below —
