@@ -181,7 +181,9 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small",
                               "videoH3Turbo4", "videoH3Turbo8",
                               "videoH3FunControl", "videoH3FunControlFull", "bridgeBunny", "bridgeSemantic", "videoFastH3",
-                              "videoW6A8", "videoRefsW6A8"];
+                              "videoW6A8", "videoRefsW6A8",
+                              // 2026-11-17: MiniMax H3 Image, the image member of the same family and licence.
+                              "imageH3"];
   ok("...and H3 and its derivatives are the only things that carry one",
     locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));
 }
@@ -249,9 +251,9 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   ok("a planted row with an unknown kind is NOT a picture model", !isPictureModel(planted));
   ok("...nor is one that declares no kind at all",
     !isPictureModel({ id: "__silent__" }) && !isPictureModel({}) && !isPictureModel(null));
-  ok("...and `makes: \"picture\"` is what the nine real ones say",
+  ok("...and `makes: \"picture\"` is what the ten real ones say",
     CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-      === "coverArt,imageIdeogram,imageZImage,moss-image,qwen-image-2.1,imageKrea2,imageZImageBase,imageAnima,imageSdxlTurbo",
+      === "coverArt,imageIdeogram,imageZImage,moss-image,qwen-image-2.1,imageKrea2,imageH3,imageZImageBase,imageAnima,imageSdxlTurbo",
     CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 
   /* END TO END, through the code a newcomer actually meets. The planted row is

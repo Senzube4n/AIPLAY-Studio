@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET } from "./moss-image.js";
 import { QWEN_IMAGE_ENGINE } from "./qwen-status.js";
+import { h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET } from "./h3-image.js";
 import { QWEN_DRAFT } from "./qwen-image.js";
 import { applyPersona, personaFits } from "./personas.js";
 import { safetyRefusal } from "./safety/refusal.js";
@@ -14,7 +15,7 @@ const source = readFileSync(new URL("./index.js", import.meta.url), "utf8");
 const start = source.indexOf('if (p === "/api/image" && req.method === "POST")');
 const end = source.indexOf('if (p === "/api/', start + 20);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("d", `const { p,req,res,readBody,json,config,path,mossImageOptions,MOSS_IMAGE_ENGINE,MOSS_IMAGE_PRESET,mossImageStatus,QWEN_IMAGE_ENGINE,QWEN_DRAFT,hasWildcards,expand,personas,personaFits,applyPersona,pendingImagePrompt,pendingImagePrivate,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,safetyRefusal,lineage,randomUUID,Math,assignedTo }=d; ${source.slice(start, end)}`);
+const run = new AsyncFunction("d", `const { h3ImageGraph,H3_IMAGE_ENGINE,H3_IMAGE_CAPABILITY,H3_IMAGE_PRESET,p,req,res,readBody,json,config,path,mossImageOptions,MOSS_IMAGE_ENGINE,MOSS_IMAGE_PRESET,mossImageStatus,QWEN_IMAGE_ENGINE,QWEN_DRAFT,hasWildcards,expand,personas,personaFits,applyPersona,pendingImagePrompt,pendingImagePrivate,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,safetyRefusal,lineage,randomUUID,Math,assignedTo }=d; ${source.slice(start, end)}`);
 async function request(body, ready = true, custom = false) {
   const queued = [], checked = [];
   const controlledMath = Object.create(Math); controlledMath.random = () => 0.25;
@@ -22,6 +23,7 @@ async function request(body, ready = true, custom = false) {
     p: "/api/image", req: { method: "POST", headers: {} }, res: {}, readBody: async () => ({ action: "create", engine: MOSS_IMAGE_ENGINE, ...body }),
     json: (_, status, result) => ({ status, body: result }), path,
     config: { image: { engine: QWEN_IMAGE_ENGINE }, art: { size: 1024, steps: 4 }, inputDir: "input" },
+    h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET,
     mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, QWEN_IMAGE_ENGINE, QWEN_DRAFT, assignedTo: () => custom ? "custom-cover" : null,
     mossImageStatus: async ({ options } = {}) => { checked.push(options); return { mossRecipe: "fixture-recipe", ready, missingFiles: [], missingNodes: [], runtimeReady: ready, filesReady: true, error: ready ? null : "Native MOSS runtime unavailable" }; },
     hasWildcards: () => false, expand: prompt => ({ prompt, choices: [] }), personas: { get: async () => null }, personaFits, applyPersona,
