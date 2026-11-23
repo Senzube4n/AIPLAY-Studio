@@ -113,6 +113,7 @@ const ROUTE_FILES = [
  * so the list cannot rot into a licence for whatever later takes that name.
  * ────────────────────────────────────────────────────────────────────────── */
 const UNREADABLE = {
+  studio_run: "Calls an explicit set of existing read-only tools. server/mcp-code-mode_test.js exercises dispatch and restrictions through the real stdio server.",
   studio_api_request: "The user chooses an existing local JSON API path and method at runtime. server/mcp-workspace_test.js verifies its /api/ restriction, traversal and external-URL refusal, and method/body limits; typed workflows remain separately censused.",
   yue2_gguf_setup:
     "its run() picks the path from the action it was given — `action: \"cancel\"` posts to "

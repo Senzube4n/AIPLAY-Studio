@@ -726,6 +726,7 @@ node scripts/gen_notice.mjs --check || exit 1
 # utters must exist in the live tool list, or the guide is the drift it
 # exists to prevent.
 node server/mcp-guide_test.js || exit 1
+node --test server/mcp-code-mode_test.js || exit 1
 # The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
 # has all three. Guarded on its presence for the same reason the server tests
 # stay manual: a hook that fails on a machine without the rig gets deleted.

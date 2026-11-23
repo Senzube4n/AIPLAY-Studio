@@ -6,6 +6,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 
 | Workflow | Tools |
 |---|---|
+| Read-only Production preflight | `studio_run` combines project, lint, shot and model-readiness reads in local JavaScript and returns the summary you select |
 | Qwen native weights and readiness | `model_inventory`, `models_for_this_machine`, `download_model`, `cancel_download`, `qwen_image_status` |
 | Automatic song-cover and picture preference | `set_image_engine`: persistent cover engine, or with `use_for` `pictures` / `both` the engine `make_image` uses when it names none; `auto` forgets the choice; with no saved choice both use the recommended picture model on this PC (`studio_status` `defaults`), and saved choices are preserved |
 | Music model | `set_music_engine`: persistent music model (an engine, an exact build, or `auto`); with no saved choice Studio uses what is installed and ready |
@@ -192,6 +193,32 @@ These typed tools share the browser's records and revision checks. In local
 chat, nested kit/source/brief arguments are JSON strings and render tools remain
 separate from planning. Reference evidence is guidance for a new performance;
 it does not establish singer identity, exact hit timing or waveform preservation.
+
+## Programmatic tool calling
+
+Use `studio_run` over the Studio MCP connection when a Production check needs
+several reads. Pass the body of an async JavaScript function as `code`. The
+function receives `tools` and returns a JSON value. The following example reports
+missing renders and preflight findings for one episode.
+
+```js
+const slug = "episode-03";
+const [{ project }, findings] = await Promise.all([
+  tools.mv_open_project({ slug }),
+  tools.mv_lint({ slug }),
+]);
+const rendered = new Set(project.clips.filter((clip) => clip.clipFile).map((clip) => clip.segmentId));
+const missing = project.segments
+  .filter((scene) => scene.mode === "generate" && !rendered.has(scene.id))
+  .map((scene) => scene.id);
+return { slug, missing, findings: findings.map(({ level, where, msg }) => ({ level, where, msg })) };
+```
+
+The sandbox can also call `tools.mv_list_projects()`,
+`tools.mv_shot({ slug, segment })` and `tools.models_for_this_machine({ all })`.
+Each run has 5 seconds, up to 32 reads and a 64 KiB result limit. The sandbox's
+only Studio access is through these typed reads. Use direct tools for single
+reads, media review and actions that edit projects or queue work.
 
 ## General boundaries
 

@@ -58,9 +58,9 @@ const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
   \`mv_bible_spec\` for the authoring contract, write the bible, commit with
   \`mv_set_bible\` (strict name binding — boards may only reference declared
   characters/backgrounds) → \`mv_lint\` → \`mv_crime_board\`.
-  The mistake: rendering before \`mv_lint\`. A scene without a board falls
-  back to a generic performance shot, and that is GPU-minutes spent on a
-  shot nobody wanted. \`mv_update_segment\` re-scopes one scene;
+  Run \`mv_lint\` before rendering. Without a board, a scene falls back to
+  a generic performance shot. Use \`studio_run\` to combine read-only checks
+  across scenes. \`mv_update_segment\` re-scopes one scene;
   \`mv_set_board\` upserts one storyboard without re-authoring the bible.
 
 3 ASSETS (the expensive stage) — inside the project: \`mv_generate_asset\`

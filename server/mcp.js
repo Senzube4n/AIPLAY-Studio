@@ -17,6 +17,7 @@
  * the server; the legacy Studio canvas export remains browser-based.
  */
 import http from "node:http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { URL, fileURLToPath } from "node:url";
 import path from "node:path";
 import { realpathSync } from "node:fs";
@@ -28,6 +29,7 @@ import { dawTools } from "./mcp-daw.js";
 import { mvTools } from "./mcp-mv.js";
 // The map of the surface (FORK): pipeline_guide, listed first on purpose.
 import { guideTools } from "./mcp-guide.js";
+import { codeModeTool, CODE_MODE_READ_LIMIT } from "./mcp-code-mode.js";
 // The Video lab (FORK): comparison, the quality selector and the render toggles.
 import { videoLabTools } from "./mcp-videolab.js";
 /* The engine door (FORK): the raw ComfyUI graph, and the record of every one
@@ -92,6 +94,7 @@ import { excludedTerritoriesText } from "./models.js";
 const H3_EXCLUDED = excludedTerritoriesText();
 
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
+const codeModeRead = new AsyncLocalStorage();
 
 /**
  * The actor this MCP process stamps on every request — ALWAYS `agent:<name>`.
@@ -139,6 +142,7 @@ export function refusalText(r) {
  */
 function api(method, path, body, timeoutMs = 120_000, media = null) {
   return new Promise((resolve, reject) => {
+    const signal = codeModeRead.getStore();
     const u = new URL(path, BASE);
     const payload = body === undefined ? null : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
     const req = http.request(
@@ -154,10 +158,19 @@ function api(method, path, body, timeoutMs = 120_000, media = null) {
             : {}),
         },
         timeout: timeoutMs,
+        signal,
       },
       (res) => {
         const chunks = [];
-        res.on("data", (c) => chunks.push(c));
+        let bytes = 0;
+        if (signal) res.on("error", reject);
+        res.on("data", (c) => {
+          if (signal && (bytes += c.length) > CODE_MODE_READ_LIMIT) {
+            req.destroy(new Error("Studio Code Mode read exceeds 1 MiB."));
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
           let parsed;
@@ -451,6 +464,9 @@ export const TOOLS = [
    * recommends a 43 GB video engine to an 8 GB card, politely and with
    * complete confidence. */
   ...modelTools(api),
+  codeModeTool((name) => byName.get(name), (tool, args, signal) => (
+    codeModeRead.run(signal, () => tool.run(args))
+  )),
   ...cloudTools(api),
   ...runpodTools(api),
   ...fastCoverTools(api),
@@ -4089,7 +4105,7 @@ async function handle(msg) {
        * result; the field is stripped from the JSON so the text half stays
        * clean. MCP carries image content natively — nothing here needed
        * inventing, it simply was never used. */
-      const shots = Array.isArray(result?._images) ? result._images : null;
+      const shots = !tool.jsonOnly && Array.isArray(result?._images) ? result._images : null;
       const text = shots ? { ...result, _images: undefined } : result;
       return reply(id, {
         content: [

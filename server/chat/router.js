@@ -657,6 +657,7 @@ export const ROUTABLE = {
  * to yet", which is the difference between a boundary and an oversight.
  */
 export const WITHHELD = {
+  studio_run: "Programmatic workflows are piloted through the dedicated Studio MCP connection. Studio Chat offers the individual Production reads.",
   daw_plugins: "Combines native plugin execution with runtime installation and file copying. Choose plugins explicitly in DAW > Plugins or through external MCP; the built-in chat's generic per-tool confirmation does not review native executable plugins.",
   studio_api_request: "Raw API methods can mix reads, deletion, trust grants and generation; the local chat's per-tool gate cannot classify them. Use the typed tools here or explicitly invoke this fallback through external MCP.",
   enhance_style: "this chat IS a language model writing the words; asking a second model to rewrite them is a round trip for nothing, and a local one would take the card",
