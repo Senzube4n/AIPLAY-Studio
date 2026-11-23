@@ -1,4 +1,5 @@
 import { appConfirm } from './dialog.js';
+import { openSetupPlanner } from './setup-plan.js';
 const $=id=>document.getElementById(id);
 const el=(tag,text)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;return n;};
 let draft=null,editingId=null,review=null,epoch=0,listEpoch=0;
@@ -18,7 +19,7 @@ async function preview(){const serial=++epoch;review=null;$('templateLoad').disa
   for(const license of result.licenses){const link=el('a','Model terms');link.href=license.url;link.target='_blank';link.rel='noreferrer';link.className='edtool sm';link.title=license.id;root.append(link);}
   const install=el('button','Review installation');install.type='button';install.className='edtool';install.disabled=!result.canApply;install.addEventListener('click',guarded(async()=>{
     const r=await fetch('/api/setup-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:result.plan.target,selection:result.template.selection})});const p=await r.json();if(!r.ok)throw Error(p.error);
-    const host=$('localModelPlan');host.parentElement.open=true;host.dispatchEvent(new CustomEvent('aiplay:plan-target',{detail:{target:result.plan.target,carry:false}}));host.dispatchEvent(new Event('aiplay:plan-refresh'));host.scrollIntoView({block:'center'});
+    await openSetupPlanner($('localModelPlan'),result.plan.target);
   }));root.append(install);
   const hint=el('p',`${(result.plan.storage.modelBytes/1e9).toFixed(2)} GB curated files; review model terms and installation separately.`);hint.className='hint';root.append(hint);$('templateLoad').disabled=!result.canApply;note('Preview only. Load fills forms; generation and installation require their own actions.');return result;
 }

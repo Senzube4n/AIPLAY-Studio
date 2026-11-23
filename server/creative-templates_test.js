@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { makeCreativeTemplate as make, validateCreativeTemplate as validate, previewCreativeTemplate as preview, createCreativeTemplates } from './creative-templates.js';
 import { MODEL_PROFILES } from '../shared/model-profiles.js';
 import { musicTemplateSettings, templateFormFields, assertTemplateFields } from '../web/template-forms.js';
@@ -54,4 +55,57 @@ test('Music capture uses effective ACE controls and never MiniMax defaults or pr
  assert.equal(templateFormFields('video',{width:1280,height:704},'runpod').vidRunPodSize,'1280x704');
  const doc={getElementById:id=>id==='aLm'?{tagName:'SELECT',options:[{value:'qwen_4b_ace15.safetensors'}]}:{type:'range',min:'1',max:'50'}};
  assert.throws(()=>assertTemplateFields(doc,{aLm:'qwen_1.7b_ace15.safetensors'}));assert.throws(()=>assertTemplateFields(doc,{aSteps:60}));assert.doesNotThrow(()=>assertTemplateFields(doc,{aSteps:50,aLm:'qwen_4b_ace15.safetensors'}));
+});
+
+test('first-open and mounted setup handoffs keep the reviewed target and selection', async () => {
+  const source = await readFile(new URL('../web/setup-plan.js', import.meta.url), 'utf8');
+  const code = source.slice(
+    source.indexOf('export async function openSetupPlanner'),
+    source.indexOf('export async function mountSetupPlanner'),
+  ).replace('export ', '');
+  for (const mounted of [false, true]) {
+    let finishMount;
+    const mountReady = new Promise(resolve => { finishMount = resolve; });
+    const disclosure = { open: false };
+    const events = [];
+    let target = mounted ? 'local' : undefined;
+    const selection = { music: 'ace15-xl-sft' };
+    let dispatch;
+    const root = {
+      closest: () => disclosure,
+      dispatchEvent(event) {
+        events.push(event.type);
+        dispatch?.(event);
+      },
+      scrollIntoView() { assert.equal(disclosure.open, true); },
+    };
+    const open = runInNewContext(`${code}\nopenSetupPlanner;`, {
+      async mountSetupPlanner(element, options) {
+        assert.equal(element, root);
+        assert.equal(options.chooseTarget, true);
+        await mountReady;
+        if (!mounted) target = options.target;
+        dispatch = (event) => {
+          if (event.type !== 'aiplay:plan-target') return;
+          target = event.detail.target;
+          if (event.detail.carry) selection.pictures = 'sdxl-turbo';
+        };
+      },
+      Event: class { constructor(type) { this.type = type; } },
+      CustomEvent: class { constructor(type, { detail }) { this.type = type; this.detail = detail; } },
+    });
+    const opening = open(root, 'runpod');
+    assert.equal(disclosure.open, false);
+    assert.deepEqual(events, []);
+    finishMount();
+    await opening;
+    assert.equal(disclosure.open, true);
+    assert.equal(target, 'runpod');
+    assert.deepEqual(selection, { music: 'ace15-xl-sft' });
+    assert.deepEqual(events, ['aiplay:plan-target', 'aiplay:plan-refresh']);
+  }
+  for (const caller of ['creative-templates.js', 'model-browser.js']) {
+    const module = await readFile(new URL(`../web/${caller}`, import.meta.url), 'utf8');
+    assert.match(module, /await openSetupPlanner\(\$\('localModelPlan'\),/);
+  }
 });

@@ -9,6 +9,17 @@ async function request(target, selection, verify = false) {
   const response = await fetch(`/api/setup-plan?target=${target}`, selection || verify ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, selection, ...(verify ? { verify: true } : {}) }) } : {});
   const data = await response.json(); if (!response.ok) throw Error(data.error || 'Setup could not be checked.'); return data;
 }
+
+export async function openSetupPlanner(root, target) {
+  if (!root || !['local', 'runpod'].includes(target)) throw Error('Choose a setup location.');
+  // Install the target listener before opening the disclosure triggers its lazy mount.
+  await mountSetupPlanner(root, { target, chooseTarget: true });
+  root.dispatchEvent(new CustomEvent('aiplay:plan-target', { detail: { target, carry: false } }));
+  root.dispatchEvent(new Event('aiplay:plan-refresh'));
+  root.closest('details').open = true;
+  root.scrollIntoView({ block: 'center' });
+}
+
 export async function mountSetupPlanner(root, { target = 'local', chooseTarget = false, selectionOnly = false, onPlan } = {}) {
   if (!root) return;
   if (root.dataset.mounted) { root.dispatchEvent(new Event('aiplay:plan-refresh')); return; }

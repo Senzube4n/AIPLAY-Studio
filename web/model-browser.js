@@ -1,5 +1,6 @@
 import { revealSetting } from './settings-sections.js';
 import { appConfirm } from './dialog.js';
+import { openSetupPlanner } from './setup-plan.js';
 const $ = id => document.getElementById(id);
 const size = n => Number.isFinite(n) ? `${(n / 1e9).toFixed(2)} GB` : 'Size unavailable';
 let provider = 'civitai', selected = null, detail = null, onDisk = false, request = 0, busy = false, timer = null, canDownload = false;
@@ -144,8 +145,18 @@ async function curated() {
       const verdict=p.fit?.state==='wont-run'?'Unsupported':p.experimental?'Experimental':!p.fit||p.fit.state==='unknown'?'Unknown':'Supported';
       const row=el('div',null,'catalog-transfer');row.title=p.fit?.why||'Hardware needs checking before generation.';row.append(el('strong',p.label),el('span',verdict,'chip'),el('p',p.workload,'hint'));
       const choose=el('button','Review setup','edtool');choose.type='button';choose.addEventListener('click',async()=>{
-        try {const r=await fetch('/api/setup-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target,selection:{[p.category]:p.id}})});const saved=await r.json();if(!r.ok)throw Error(saved.error);
-        const host=$('localModelPlan');host.parentElement.open=true;host.dispatchEvent(new CustomEvent('aiplay:plan-target',{detail:{target,carry:false}}));host.dispatchEvent(new Event('aiplay:plan-refresh'));host.scrollIntoView({block:'center'});}catch(e){status(e.message,true);}
+        const planTarget = target;
+        try {
+          const response = await fetch('/api/setup-plan', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: planTarget, selection: { [p.category]: p.id } }),
+          });
+          const saved = await response.json();
+          if (!response.ok) throw Error(saved.error);
+          await openSetupPlanner($('localModelPlan'), planTarget);
+        } catch (error) {
+          status(error.message, true);
+        }
       });row.append(choose);root.append(row);
     }status('Supported workflows still require installed models and a ready AI service.');
   }catch(e){status(e.message,true);}
