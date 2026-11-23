@@ -760,7 +760,7 @@ function paintMusicModelSelect(sel) {
  *
  * `var`, not `const`: musicEnginePaint() calls the painter from early in boot. */
 var PRESET_IMAGE_CAP = { "moss-image": "moss-image", "qwen-image-2.1": "qwen-image-2.1", flux2: "coverArt", zimage: "imageZImage", "zimage-base": "imageZImageBase",
-  anima: "imageAnima", krea2: "imageKrea2", ideogram4: "imageIdeogram" };
+  anima: "imageAnima", krea2: "imageKrea2", "h3-image": "imageH3", ideogram4: "imageIdeogram" };
 var PRESET_VIDEO_CAP = { ltx: "videoLtx", h3: "video", fasth3: "videoFastH3" };
 /* What the rows read that /api/models does not carry: the covers pick, the
  * writing models and Whisper. Read when the screen paints, at most every 20 s,
@@ -18640,7 +18640,7 @@ $("imgDraftGet").onclick = () => {
 
 function imgRefsPaint() {
   const eng = imgEffectiveEngine();
-  const fluxOnly = !["flux2", "qwen-image-2.1"].includes(eng);
+  const fluxOnly = !["flux2", "qwen-image-2.1", "h3-image"].includes(eng);
   const n = imgRefs.length;
 
   const prev = $("imgRefPrev");
@@ -18960,6 +18960,10 @@ const IMG_ENGINES = {
   krea2: {
     steps: 8, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
     note: "Krea 2 Turbo (12B, int8). 8 steps, cfg 1.0, euler/simple. The frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references. Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024²: ten times FLUX.2 klein, for the frontier picture.",
+  },
+  "h3-image": {
+    steps: 6, cfg: 1, negative: false, maxSteps: 30, sampling: { sampler: "lcm", scheduler: "simple", fixed: false },
+    note: "MiniMax H3 Image (int8). 6 steps, CFG 1, lcm (natural skin) or euler. Photoreal pictures and character edits from up to 10 references, named <Picture 1>, <Picture 2>… in the order added. No negative prompt: end the prompt with what to avoid. H3 Community Licence (territory-restricted).",
   },
   ideogram4: {
     steps: null, negative: false, maxSteps: 30,
@@ -19343,7 +19347,7 @@ $("imgSize").onchange = () => {
  * handler below also runs once at load, and a window on page load for a model
  * nobody chose would be noise. Anima and checkpoints run on files the person
  * names, so they are left to the Create check. */
-const IMG_CAP = { "moss-image": "moss-image", flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2" };
+const IMG_CAP = { "moss-image": "moss-image", flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2", "h3-image": "imageH3" };
 $("imgEngine").addEventListener("change", async (e) => {
   if (!e.isTrusted) return;
   const id = IMG_CAP[$("imgEngine").value];
@@ -19575,6 +19579,8 @@ $("imgGo").onclick = async () => {
         } : {}),
         /* Anima samples with whatever pair is chosen (er_sde / simple unless changed). */
         ...($("imgEngine").value === "anima" && $("imgSampler").value ? { sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}),
+        /* H3 Image: lcm / simple unless changed; CFG is always 1. */
+        ...($("imgEngine").value === "h3-image" ? { cfg: 1, ...($("imgSampler").value ? { sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}) } : {}),
         /* Z-Image base only. Sending these on TURBO would be sending fields
          * the model cannot use, and the server refuses a negative there rather
          * than ignoring it — IMG_ENGINES[eng].negative is where that rule

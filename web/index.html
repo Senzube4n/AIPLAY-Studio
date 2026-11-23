@@ -1570,6 +1570,7 @@
           <option value="zimage-base" data-cover="Z-Image base: 25 steps, Apache-2.0">Z-Image base: 25 steps, real negatives</option>
           <option value="anima">Anima: anime &amp; illustration</option>
           <option value="krea2">Krea 2 Turbo: 8 steps, frontier look</option>
+          <option value="h3-image" data-cover="MiniMax H3 Image">MiniMax H3 Image: photoreal, takes refs</option>
           <option value="ideogram4">Ideogram 4: non-commercial</option>
           <option value="checkpoint">Your own model file</option>
         </select></span>
@@ -1671,11 +1672,11 @@
              engine (or, for your own file, from what kind of model it is) each
              time it changes: web/app.js imgSampling. Engines whose graph always
              uses one pair show it locked, so the screen says what renders. -->
-        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden>sampler</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden><select id="imgSampler" class="sel2 sm"></select></span>
+        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 h3-image qwen-image-2.1 moss-image" hidden>sampler</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 h3-image qwen-image-2.1 moss-image" hidden><select id="imgSampler" class="sel2 sm"></select></span>
 
-        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden>schedule</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden><select id="imgSched" class="sel2 sm"></select></span>
+        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 h3-image qwen-image-2.1 moss-image" hidden>schedule</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 h3-image qwen-image-2.1 moss-image" hidden><select id="imgSched" class="sel2 sm"></select></span>
 
         <label for="imgNeg" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden>avoid</label>
         <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden><input id="imgNeg" class="sel2"

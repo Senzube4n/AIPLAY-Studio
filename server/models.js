@@ -2348,6 +2348,54 @@ export const CATALOG = [
     ],
   },
   {
+    /* MINIMAX-H3-IMAGE — the image member of the H3 family, run by ComfyUI's
+     * own MiniMaxH3ImageConditioning node (comfy_extras/nodes_minimax_h3.py).
+     * Files and URLs as ComfyUI's "MiniMax-H3-Image" templates name them;
+     * sizes as the files on a working 16 GB RTX 4070 Ti SUPER measured. The
+     * text encoder is H3's own (the same entry the video row downloads, int8
+     * on disk counts), so a machine with H3 video pays only the DiT and VAE.
+     * Recipe: 6 steps, CFG 1, lcm or euler, simple; up to 10 references. */
+    id: "imageH3",
+    makes: "picture",
+    label: "Images — MiniMax H3 Image (H3 Community Licence)",
+    why: "Photoreal pictures and character edits from up to ten reference pictures, in six steps. Keeps a face and an outfit across new scenes; the heaviest picture model here.",
+    licence: "MiniMax H3 Community Licence",
+    home: "https://huggingface.co/Comfy-Org/MiniMax-H3-Image",
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property)",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image",
+      conditions: [
+        "§V.4 — you may not use, reproduce, modify, distribute or display the Outputs outside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the USA.",
+        "§V.3 — Outputs may not be used to improve any other AI model.",
+        "§IV.2 — a commercial product or service using H3 must display “MiniMax H3” prominently.",
+      ],
+      note: "Quoted from the MiniMax H3 Community Licence the video row carries; read the licence on the MiniMax-H3-Image page before relying on it.",
+    },
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/MiniMax-H3-Image/resolve/main/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors`,
+        dest: M("diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors"),
+        bytes: 20_979_314_802 },
+      H3_SHARED_FILES[0],
+      { url: `${HF}/Comfy-Org/MiniMax-H3-Image/resolve/main/vae/minimax_h3_image_vae_fp16.safetensors`,
+        dest: M("vae/minimax_h3_image_vae_fp16.safetensors"),
+        bytes: 1_168_505_312 },
+    ],
+    note: "The int8 DiT (20.98 GB), H3's Qwen3-VL 32B encoder (shared with H3 video) and the image VAE (1.17 GB). 6 steps at CFG 1, lcm/euler, simple; no negative prompt (put what to avoid at the end of the prompt). References are <Picture 1>, <Picture 2>… in the order you add them.",
+    requires: {
+      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
+      note: "A 21 GB DiT and a 14–27 GB encoder staged into a 16 GB card: it runs, and system RAM is the bottleneck (64 GB recommended).",
+    },
+  },
+  {
     id: "imageZImageBase",
     makes: "picture",
     label: "Images — Z-Image base (Apache-2.0)",
@@ -3365,6 +3413,7 @@ export const MODEL_TO_CAPABILITY = {
   "zimage": "imageZImage",
   "zimage-base": "imageZImageBase",
   "krea2": "imageKrea2",
+  "h3-image": "imageH3",
   "qwen-image-2.1": "qwen-image-2.1",
   "moss-image": "moss-image",
   // The engine name /api/image accepts is "anima"; the two files it needs are

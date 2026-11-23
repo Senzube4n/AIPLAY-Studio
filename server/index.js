@@ -66,6 +66,7 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
 import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenImageSettings } from "./qwen-image.js";
+import { h3ImageGraph, H3_IMAGE_ENGINE, H3_IMAGE_CAPABILITY, H3_IMAGE_PRESET } from "./h3-image.js";
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET } from "./moss-image.js";
@@ -9151,12 +9152,12 @@ const server = http.createServer(async (req, res) => {
       if (b.imageEngine !== undefined) {
         /* config.js's own check for the saved value (the covers' list minus "checkpoint"). */
         if (!PREF_PATHS.find(([g, k]) => g === "image" && k === "engine")[2](b.imageEngine)) {
-          return json(res, 400, { error: "imageEngine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | moss-image (your own model file is picked per picture)" });
+          return json(res, 400, { error: "imageEngine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | h3-image | qwen-image-2.1 | moss-image (your own model file is picked per picture)" });
         }
       }
       if (b.engine !== undefined) {
-        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "moss-image", "checkpoint"].includes(b.engine)) {
-          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | moss-image | checkpoint" });
+        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "h3-image", "qwen-image-2.1", "moss-image", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | h3-image | qwen-image-2.1 | moss-image | checkpoint" });
         }
         if (b.engine === MOSS_IMAGE_ENGINE) {
           const readiness = await mossImageStatus();
@@ -9165,6 +9166,10 @@ const server = http.createServer(async (req, res) => {
         if (b.engine === QWEN_IMAGE_ENGINE) {
           const readiness = await qwenImageStatus();
           if (!readiness.ready) return json(res, 400, readiness);
+        }
+        if (b.engine === H3_IMAGE_ENGINE) {
+          const cap = (await models.status()).find((c) => c.id === H3_IMAGE_CAPABILITY);
+          if (cap && !cap.ready) return json(res, 400, { error: `${cap.label} is not downloaded — open the Models screen first.` });
         }
         if (b.engine === "krea2") {
           const cap = (await models.status()).find((c) => c.id === "imageKrea2");
@@ -10036,7 +10041,7 @@ const server = http.createServer(async (req, res) => {
        * the machine's pick from the disk when nobody chose (machineDefaults). */
       if (!b.engine && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const engine = b.engine || config.image.engine;
-      if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "moss-image", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
+      if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "h3-image", "qwen-image-2.1", "moss-image", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
       /* FAST DRAFT (QWEN_DRAFT in qwen-image.js): Viggle's 5-step turbo LoRA on
        * Qwen Image 2.1, about 3x quicker and worse at small text. Refused, never
        * ignored, on any other engine; the base-only cases (transparent, more
@@ -10136,6 +10141,19 @@ const server = http.createServer(async (req, res) => {
         if (!ZIMAGE_PRESET[variant].cfgs && String(b.negative || "").trim()) {
           return json(res, 400, { error: "Z-Image Turbo is distilled and samples at cfg 1.0, where the negative prompt is never evaluated — it would be ignored, so it is refused instead. Switch the engine to Z-Image base (25 steps, cfg 4.0), which does honour it." });
         }
+      }
+      if (engine === H3_IMAGE_ENGINE) {
+        const cap = (await models.status()).find((c) => c.id === H3_IMAGE_CAPABILITY);
+        const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
+        /* The graph builder's own refusals (a negative, CFG other than 1, an
+         * unknown sampler, too many references), answered before queuing. */
+        try {
+          h3ImageGraph({ prompt: b.prompt || "readiness check", negative: b.negative || "", seed: 0,
+            width: b.width, height: b.height, steps: b.steps, cfg: b.cfg, count: b.count,
+            refImages: Array.isArray(b.refImages) ? b.refImages.map((_, i) => `reference-${i + 1}.png`) : [],
+            sampler: b.sampler, scheduler: b.scheduler });
+        } catch (err) { return json(res, 400, { error: err.message }); }
       }
       if (engine === "krea2") {
         const cap = (await models.status()).find((c) => c.id === "imageKrea2");
@@ -10354,8 +10372,8 @@ const server = http.createServer(async (req, res) => {
           ...(collabImageBase ? { collabImageBase: true, collabRefHashes } : {}),
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
-          width: Math.min(Math.max(Number(b.width) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
-          height: Math.min(Math.max(Number(b.height) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
+          width: Math.min(Math.max(Number(b.width) || config.art.size, 256), (engine === QWEN_IMAGE_ENGINE || engine === H3_IMAGE_ENGINE) ? 4096 : 2048),
+          height: Math.min(Math.max(Number(b.height) || config.art.size, 256), (engine === QWEN_IMAGE_ENGINE || engine === H3_IMAGE_ENGINE) ? 4096 : 2048),
           /* ⚠ NO APP-WIDE DEFAULT FOR Z-IMAGE, on purpose.
            *
            * `config.art.steps` is 4 — FLUX.2 klein's distilled number — and
@@ -10371,6 +10389,7 @@ const server = http.createServer(async (req, res) => {
           steps: (() => {
             if (engine === MOSS_IMAGE_ENGINE) return b.steps ?? MOSS_IMAGE_PRESET.steps;
             if (engine === QWEN_IMAGE_ENGINE) return b.steps ?? QWEN_IMAGE_PRESET.steps;
+            if (engine === H3_IMAGE_ENGINE) return b.steps ?? H3_IMAGE_PRESET.steps;
             const zimage = engine === "zimage" || engine === "zimage-base";
             const asked = Number(b.steps);
             if (!(asked > 0)) return zimage ? undefined : Math.min(Math.max(config.art.steps, 1), 30);
@@ -10398,8 +10417,8 @@ const server = http.createServer(async (req, res) => {
             ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
           /* The checkpoint and Anima take a sampler and schedule (animaGraph reads
            * them); the other engines' graphs fix their own. */
-          sampler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE) && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
-          scheduler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE) && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
+          sampler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE || engine === H3_IMAGE_ENGINE) && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
+          scheduler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE || engine === H3_IMAGE_ENGINE) && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
           refImages,
         },
       };
